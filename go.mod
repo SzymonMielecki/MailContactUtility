@@ -1,3 +1,3 @@
-module MailContactUtilty
+module MailContactUtility
 
 go 1.23
