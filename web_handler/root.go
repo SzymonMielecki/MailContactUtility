@@ -27,7 +27,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "Email already registered")
 		return
 	}
-	url := google_auth.GetUrl(email, []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope})
+	url := google_auth.GetUrl(google_auth.AuthConfig{Email: email, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}})
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, `<a href="`+url+`">Click here to authorize</a>`)
 }
@@ -45,7 +45,7 @@ func Auth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := google_auth.HandleAuthCode(state, code, []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope})
+	err := google_auth.HandleAuthCode(&google_auth.AuthConfig{Email: state, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}}, code)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(w, "Error: %v", err)

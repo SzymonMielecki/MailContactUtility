@@ -7,18 +7,26 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
 	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
 
+type AuthConfig struct {
+	Email  string
+	Scopes []string
+}
+
 type TokenWithEmail struct {
 	Token *oauth2.Token
 	Email string
 }
 
-func GetUrl(email string, scopes []string) string {
+func GetUrl(authConfig AuthConfig) string {
+	email := authConfig.Email
+	scopes := authConfig.Scopes
 	b, err := os.ReadFile("credentials.json")
 	if err != nil {
 		log.Fatalf("Unable to read client secret file: %v", err)
@@ -35,7 +43,8 @@ func GetUrl(email string, scopes []string) string {
 	return config.AuthCodeURL(email, opts...)
 }
 
-func HandleAuthCode(email string, code string, scopes []string) error {
+func HandleAuthCode(authConfig *AuthConfig, code string) error {
+	scopes := authConfig.Scopes
 	b, err := os.ReadFile("credentials.json")
 	if err != nil {
 		return fmt.Errorf("unable to read client secret file: %v", err)
@@ -51,15 +60,15 @@ func HandleAuthCode(email string, code string, scopes []string) error {
 		return fmt.Errorf("unable to retrieve token from web: %v", err)
 	}
 
-	SaveToken(email, tok)
+	SaveToken(authConfig, tok)
 	return nil
 }
-func StartAuth(email string, scopes []string) {
-	if _, err := TokenFromFile(email); err != nil {
-		url := GetUrl(email, scopes)
+func StartAuth(authConfig *AuthConfig) {
+	if _, err := TokenFromFile(authConfig); err != nil {
+		url := GetUrl(*authConfig)
 		fmt.Println("Please authorize at:", url)
 		for {
-			if _, err := TokenFromFile(email); err == nil {
+			if _, err := TokenFromFile(authConfig); err == nil {
 				break
 			}
 			time.Sleep(1 * time.Second)
@@ -67,7 +76,8 @@ func StartAuth(email string, scopes []string) {
 	}
 }
 
-func GetClient(email string, scopes []string) *http.Client {
+func GetClient(authConfig *AuthConfig) *http.Client {
+	scopes := authConfig.Scopes
 	b, err := os.ReadFile("credentials.json")
 	if err != nil {
 		log.Fatalf("Unable to read client secret file: %v", err)
@@ -77,14 +87,15 @@ func GetClient(email string, scopes []string) *http.Client {
 	if err != nil {
 		log.Fatalf("Unable to parse client secret file to config: %v", err)
 	}
-	tok, err := TokenFromFile(email)
+	tok, err := TokenFromFile(authConfig)
 	if err != nil {
 		log.Fatalf("Unable to retrieve token from file: %v", err)
 	}
 	return config.Client(context.Background(), tok)
 }
 
-func TokenFromFile(email string) (*oauth2.Token, error) {
+func TokenFromFile(authConfig *AuthConfig) (*oauth2.Token, error) {
+	email := authConfig.Email
 	f, err := os.Open("tokens.json")
 	if err != nil {
 		return nil, err
@@ -103,26 +114,26 @@ func TokenFromFile(email string) (*oauth2.Token, error) {
 	return nil, fmt.Errorf("token not found for email: %s", email)
 }
 
-func SaveToken(email string, token *oauth2.Token) {
+func SaveToken(authConfig *AuthConfig, token *oauth2.Token) {
+	email := authConfig.Email
 	var tok []*TokenWithEmail
 
-	// Try to read existing tokens
 	if f, err := os.Open("tokens.json"); err == nil {
 		json.NewDecoder(f).Decode(&tok)
 		f.Close()
 	}
 
-	// Update or append the token
-	for _, t := range tok {
-		if t.Email == email {
-			t.Token = token
-			goto write
+	if slices.Contains(tok, &TokenWithEmail{Email: email}) {
+		for _, t := range tok {
+			if t.Email == email {
+				t.Token = token
+				break
+			}
 		}
+	} else {
+		tok = append(tok, &TokenWithEmail{Token: token, Email: email})
 	}
-	tok = append(tok, &TokenWithEmail{Token: token, Email: email})
 
-	// Write back to file
-write:
 	f, err := os.OpenFile("tokens.json", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		log.Fatalf("Unable to cache oauth token: %v", err)

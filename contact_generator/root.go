@@ -12,12 +12,12 @@ import (
 	"google.golang.org/api/option"
 )
 
-type Client struct {
+type ContactGenerator struct {
 	client *genai.Client
 	model  *genai.GenerativeModel
 }
 
-func NewClient() *Client {
+func NewContactGenerator() *ContactGenerator {
 	client, err := genai.NewClient(context.TODO(), option.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
 	if err != nil {
 		log.Fatal(err)
@@ -33,13 +33,13 @@ func NewClient() *Client {
 			"Phone":   {Type: genai.TypeString},
 		},
 	}
-	return &Client{
+	return &ContactGenerator{
 		model:  model,
 		client: client,
 	}
 }
 
-func (c Client) Generate(mail string) helper.Contact {
+func (c *ContactGenerator) Generate(mail string) helper.Contact {
 	resp, err := c.model.GenerateContent(context.TODO(), genai.Text("Extract the sender data, utilizing the data from the top of the mail, aswell as the footer, from this mail: \n"+mail+"\nBe very sure of the data you extract, if data is missing, do not make it up, but return an empty string instead, if the email or phone is different between the top and the footer, return the email or phone from the footer"))
 	if err != nil {
 		log.Fatal(err)
@@ -59,7 +59,7 @@ func (c Client) Generate(mail string) helper.Contact {
 	return helper.Contact{}
 }
 
-func (c Client) Close() error {
+func (c *ContactGenerator) Close() error {
 	c.client.Close()
 	return nil
 

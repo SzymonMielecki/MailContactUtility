@@ -1,6 +1,7 @@
 package mail_reciever
 
 import (
+	"MailContactUtilty/google_auth"
 	"MailContactUtilty/helper"
 	"context"
 	"encoding/base64"
@@ -52,12 +53,12 @@ func (mr *MailReciever) Reply(id string, contact helper.Contact) error {
 	return nil
 }
 
-func NewMailReciever(clientOption option.ClientOption, email string) *MailReciever {
+func NewMailReciever(clientOption option.ClientOption, authConfig google_auth.AuthConfig) *MailReciever {
 	srv, err := gmail.NewService(context.TODO(), clientOption)
 	if err != nil {
 		log.Printf("Unable to create people Client %v", err)
 	}
-	return &MailReciever{Service: srv, Email: email}
+	return &MailReciever{Service: srv, Email: authConfig.Email}
 }
 
 func (mr *MailReciever) GetMessages() ([]*gmail.Message, error) {
@@ -104,7 +105,6 @@ func (mr *MailReciever) ListenForEmails(ctx context.Context, pollInterval time.D
 						continue
 					}
 
-					// Check if the email was sent to contacterutil@gmail.com
 					to := getHeader(fullMsg.Payload.Headers, "To")
 					if to != "contacterutil@gmail.com" {
 						log.Printf("Skipping email not sent to contacterutil@gmail.com: %s", to)
