@@ -1,6 +1,4 @@
 .env
 credentials.json
-token.json
-server_token.json
-user_token.json
-credentials_desktop.json
+tokens.json
+DS_Store
