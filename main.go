@@ -20,10 +20,4 @@ func main() {
 		Scopes: []string{gmail.GmailReadonlyScope, gmail.GmailModifyScope},
 	})
 	defer s.Close()
-
-	go s.ServeWeb()
-
-	go s.ListenForEmails()
-
-	s.Run()
 }

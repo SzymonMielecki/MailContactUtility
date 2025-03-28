@@ -40,10 +40,6 @@ func NewServer() *Server {
 	}
 }
 func (s *Server) Start(authConfig *google_auth.AuthConfig) {
-	google_auth.StartAuth(authConfig)
-	fmt.Println("Authorization completed")
-	s.client_cg = contact_generator.NewContactGenerator()
-	s.client_mr = mail_reciever.NewMailReciever(option.WithHTTPClient(google_auth.GetClient(authConfig)), *authConfig)
 	sm := http.NewServeMux()
 	sm.HandleFunc("/register", web_handler.Register)
 	sm.HandleFunc("/auth", web_handler.Auth)
@@ -53,6 +49,16 @@ func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 		BaseContext: func(_ net.Listener) context.Context { return s.ctx },
 	}
 	s.mailList = make(chan *gmail.Message)
+	log.Println("Starting server...")
+	go s.ServeWeb()
+	google_auth.StartAuth(authConfig)
+	s.client_cg = contact_generator.NewContactGenerator()
+	s.client_mr = mail_reciever.NewMailReciever(option.WithHTTPClient(google_auth.GetClient(authConfig)), *authConfig)
+	log.Println("Starting listener...")
+	go s.ListenForEmails()
+	log.Println("Authorization completed")
+	log.Println("Starting main loop...")
+	s.Run()
 }
 func (s *Server) Close() {
 	s.client_cg.Close()
@@ -136,7 +142,6 @@ func (s *Server) Run() {
 			if err := s.webServer.Shutdown(shutdownCtx); err != nil {
 				log.Printf("Server shutdown error: %v\n", err)
 			}
-
 			return
 		}
 
