@@ -2,28 +2,29 @@ package contact_adder
 
 import (
 	"MailContactUtilty/helper"
+	"log"
+
 	"golang.org/x/net/context"
 	"google.golang.org/api/option"
 	"google.golang.org/api/people/v1"
-	"log"
 )
 
 type ContactAdder struct {
-	service *people.Service
+	*people.Service
 }
 
 func NewContactAdder(clientOption option.ClientOption) *ContactAdder {
-	srv, err := people.NewService(context.TODO(), clientOption)
+	srv, err := people.NewService(context.Background(), clientOption)
 	if err != nil {
 		log.Fatalf("Unable to create people Client %v", err)
 	}
 	return &ContactAdder{
-		service: srv,
+		Service: srv,
 	}
 }
 
 func (ca *ContactAdder) AddContact(contact helper.Contact) (helper.Contact, error) {
-	p, err := ca.service.People.CreateContact(&people.Person{
+	p, err := ca.People.CreateContact(&people.Person{
 		Names: []*people.Name{
 			{
 				GivenName:  contact.Name,

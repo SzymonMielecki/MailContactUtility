@@ -4,11 +4,12 @@ import (
 	"MailContactUtilty/helper"
 	"encoding/json"
 	"fmt"
+	"log"
+	"os"
+
 	"github.com/google/generative-ai-go/genai"
 	"golang.org/x/net/context"
 	"google.golang.org/api/option"
-	"log"
-	"os"
 )
 
 type Client struct {
@@ -21,7 +22,7 @@ func NewClient() *Client {
 	if err != nil {
 		log.Fatal(err)
 	}
-	model := client.GenerativeModel("gemini-1.5-flash")
+	model := client.GenerativeModel("gemini-2.0-flash-lite")
 	model.ResponseMIMEType = "application/json"
 	model.ResponseSchema = &genai.Schema{
 		Type: genai.TypeObject,
@@ -39,7 +40,7 @@ func NewClient() *Client {
 }
 
 func (c Client) Generate(mail string) helper.Contact {
-	resp, err := c.model.GenerateContent(context.TODO(), genai.Text("Extract the sender data, utilizing the data from the top of the mail, aswell as the footer, from this mail:"+mail))
+	resp, err := c.model.GenerateContent(context.TODO(), genai.Text("Extract the sender data, utilizing the data from the top of the mail, aswell as the footer, from this mail: \n"+mail+"\nBe very sure of the data you extract, if data is missing, do not make it up, but return an empty string instead, if the email or phone is different between the top and the footer, return the email or phone from the footer"))
 	if err != nil {
 		log.Fatal(err)
 	}
