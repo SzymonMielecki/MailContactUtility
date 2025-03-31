@@ -23,39 +23,40 @@ import (
 )
 
 type Server struct {
-	client_mr *mail_reciever.MailReciever
-	client_cg *contact_generator.ContactGenerator
-	webServer *http.Server
-	ctx       context.Context
-	cancel    context.CancelFunc
-	errChan   chan error
-	mailList  chan *gmail.Message
-	auth      *google_auth.Auth
+	AuthClient    *google_auth.Auth
+	MailClient    *mail_reciever.MailReciever
+	ContactClient *contact_generator.ContactGenerator
+	WebServer     *http.Server
+	ctx           context.Context
+	cancel        context.CancelFunc
+	errChan       chan error
+	mailList      chan *gmail.Message
 }
 
 func NewServer(dbConfig database.DatabaseConfig) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Server{
-		auth:    google_auth.NewAuth(ctx, dbConfig),
-		errChan: make(chan error, 1),
-		ctx:     ctx,
-		cancel:  cancel,
+		AuthClient:    google_auth.NewAuth(ctx, dbConfig),
+		errChan:       make(chan error, 1),
+		ctx:           ctx,
+		cancel:        cancel,
+		mailList:      make(chan *gmail.Message),
+		ContactClient: contact_generator.NewContactGenerator(),
 	}
 }
 func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 	sm := http.NewServeMux()
-	sm.HandleFunc("/register", web_handler.Register(s.auth))
-	sm.HandleFunc("/auth", web_handler.Auth(s.auth))
-	s.webServer = &http.Server{
+	sm.HandleFunc("/register", web_handler.Register(s.AuthClient))
+	sm.HandleFunc("/auth", web_handler.Auth(s.AuthClient))
+	s.WebServer = &http.Server{
 		Addr:        ":8080",
 		Handler:     sm,
 		BaseContext: func(_ net.Listener) context.Context { return s.ctx },
 	}
-	s.mailList = make(chan *gmail.Message)
 	log.Println("Starting server...")
 	go s.ServeWeb()
-	s.client_cg = contact_generator.NewContactGenerator()
-	s.client_mr = mail_reciever.NewMailReciever(option.WithHTTPClient(s.auth.GetClient(authConfig)), *authConfig)
+	s.AuthClient.StartAuth(authConfig)
+	s.MailClient = mail_reciever.NewMailReciever(option.WithHTTPClient(s.AuthClient.GetClient(authConfig)), *authConfig)
 	log.Println("Starting listener...")
 	go s.ListenForEmails()
 	log.Println("Authorization completed")
@@ -63,18 +64,18 @@ func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 	s.Run()
 }
 func (s *Server) Close() {
-	s.client_cg.Close()
+	s.ContactClient.Close()
 }
 func (s *Server) ServeWeb() {
 	fmt.Println("Server started on :8080")
-	if err := s.webServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := s.WebServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		s.errChan <- err
 	}
 	close(s.errChan)
 }
 func (s *Server) ListenForEmails() {
 	pollInterval := 10 * time.Second
-	if err := s.client_mr.ListenForEmails(s.ctx, pollInterval, s.mailList); err != nil {
+	if err := s.MailClient.ListenForEmails(s.ctx, pollInterval, s.mailList); err != nil {
 		s.errChan <- err
 	}
 }
@@ -91,7 +92,7 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 		}
 	}
 	log.Println("Processing email from: ", sender)
-	emails, err := s.auth.GetEmails()
+	emails, err := s.AuthClient.GetEmails()
 	if err != nil {
 		log.Printf("Error getting emails: %v", err)
 		return
@@ -101,10 +102,10 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 		return
 	}
 	authConfig := google_auth.AuthConfig{Email: sender, Scopes: []string{people.ContactsScope}}
-	user_auth := option.WithHTTPClient(s.auth.GetClient(&authConfig))
+	user_auth := option.WithHTTPClient(s.AuthClient.GetClient(&authConfig))
 	client_ca := contact_adder.NewContactAdder(user_auth)
 
-	mailContent, err := s.client_mr.GetMessage(mail.Id)
+	mailContent, err := s.MailClient.GetMessage(mail.Id)
 	if err != nil {
 		log.Printf("Error getting message: %v", err)
 		return
@@ -120,10 +121,10 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 			fullMailText += string(mailString)
 		}
 	}
-	contact := s.client_cg.Generate(fullMailText)
+	contact := s.ContactClient.Generate(fullMailText)
 	log.Println(contact)
 	client_ca.AddContact(contact)
-	s.client_mr.Reply(mailContent.Id, contact)
+	s.MailClient.Reply(mailContent.Id, contact)
 }
 
 func (s *Server) Run() {
@@ -141,7 +142,7 @@ func (s *Server) Run() {
 			defer shutdownCancel()
 
 			s.cancel()
-			if err := s.webServer.Shutdown(shutdownCtx); err != nil {
+			if err := s.WebServer.Shutdown(shutdownCtx); err != nil {
 				log.Printf("Server shutdown error: %v\n", err)
 			}
 			return
