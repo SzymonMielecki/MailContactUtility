@@ -40,7 +40,7 @@ func (d *Database) AddToken(token Token) error {
 }
 
 func NewDatabase(ctx context.Context, config DatabaseConfig) *Database {
-	client, err := gorm.Open(postgres.Open("host="+config.Host+" user="+config.User+" password="+config.Password+" dbname="+config.Name), &gorm.Config{})
+	client, err := gorm.Open(postgres.Open("host="+config.Host+" user="+config.User+" password="+config.Password+" dbname="+config.Name+" port=5432 sslmode=disable timezone=UTC"), &gorm.Config{})
 	if err != nil {
 		log.Fatal(err)
 	}

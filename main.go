@@ -22,7 +22,7 @@ func main() {
 		Host:     os.Getenv("DATABASE_HOST"),
 		Password: os.Getenv("DATABASE_PASSWORD"),
 		User:     "postgres",
-		Name:     "postgres",
+		Name:     "tokens",
 	})
 	fmt.Println("Starting server...")
 	s.Start(&google_auth.AuthConfig{
