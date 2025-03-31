@@ -2,15 +2,27 @@ package web_handler
 
 import (
 	"MailContactUtilty/google_auth"
+	"MailContactUtilty/server"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
+	"time"
 
 	"google.golang.org/api/gmail/v1"
 	"google.golang.org/api/people/v1"
 )
 
-func Register(a *google_auth.Auth) http.HandlerFunc {
+type HandleEmailRequest struct {
+	Subscription string `json:"subscription"`
+	Message      struct {
+		Data        []byte    `json:"data"`
+		MessageId   string    `json:"messageId"`
+		PublishTime time.Time `json:"publishTime"`
+	} `json:"message"`
+}
+
+func Register(s *server.Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			RegisterScreen().Render(r.Context(), w)
@@ -22,7 +34,7 @@ func Register(a *google_auth.Auth) http.HandlerFunc {
 			return
 		}
 		email := r.FormValue("email")
-		emails, err := a.GetEmails()
+		emails, err := s.AuthClient.GetEmails()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			MessageScreen("Error", fmt.Sprintf("Error: %v", err)).Render(r.Context(), w)
@@ -33,13 +45,13 @@ func Register(a *google_auth.Auth) http.HandlerFunc {
 			MessageScreen("Email already registered", "The email address you provided is already registered.").Render(r.Context(), w)
 			return
 		}
-		url := a.GetUrl(google_auth.AuthConfig{Email: email, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}})
+		url := s.AuthClient.GetUrl(google_auth.AuthConfig{Email: email, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}})
 		w.WriteHeader(http.StatusOK)
 		MessageScreen("Redirecting to authorization", fmt.Sprintf("Redirecting to authorization: %s", url)).Render(r.Context(), w)
 		http.Redirect(w, r, url, http.StatusSeeOther)
 	}
 }
-func Auth(a *google_auth.Auth) http.HandlerFunc {
+func Auth(s *server.Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		state := r.URL.Query().Get("state")
 		if state == "" {
@@ -54,7 +66,7 @@ func Auth(a *google_auth.Auth) http.HandlerFunc {
 			return
 		}
 
-		err := a.HandleAuthCode(&google_auth.AuthConfig{Email: state, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}}, code)
+		err := s.AuthClient.HandleAuthCode(&google_auth.AuthConfig{Email: state, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}}, code)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			MessageScreen("Error", fmt.Sprintf("Error: %v", err)).Render(r.Context(), w)
@@ -62,5 +74,22 @@ func Auth(a *google_auth.Auth) http.HandlerFunc {
 		}
 		w.WriteHeader(http.StatusOK)
 		MessageScreen("Registration successful", "You have successfully registered.").Render(r.Context(), w)
+	}
+}
+
+func HandleEmail(s *server.Server) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			MessageScreen("Method not allowed", "Method not allowed").Render(r.Context(), w)
+			return
+		}
+		var handleEmailRequest HandleEmailRequest
+		if err := json.NewDecoder(r.Body).Decode(&handleEmailRequest); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			MessageScreen("Invalid JSON", fmt.Sprintf("Invalid JSON: %v", err)).Render(r.Context(), w)
+			return
+		}
+		s.
 	}
 }

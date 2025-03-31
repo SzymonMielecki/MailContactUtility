@@ -30,10 +30,11 @@ type Server struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	errChan       chan error
-	mailList      chan *gmail.Message
+	MailList      chan *gmail.Message
+	projectID     string
 }
 
-func NewServer(dbConfig database.DatabaseConfig) (*Server, error) {
+func NewServer(dbConfig database.DatabaseConfig, projectID string) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	auth, err := google_auth.NewAuth(ctx, dbConfig)
 	if err != nil {
@@ -41,18 +42,19 @@ func NewServer(dbConfig database.DatabaseConfig) (*Server, error) {
 		return nil, err
 	}
 	return &Server{
+		projectID:     projectID,
 		AuthClient:    auth,
 		errChan:       make(chan error, 1),
 		ctx:           ctx,
 		cancel:        cancel,
-		mailList:      make(chan *gmail.Message),
+		mailList:      make(chan mail_reciever.PubSubMessage),
 		ContactClient: contact_generator.NewContactGenerator(),
 	}, nil
 }
 func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 	sm := http.NewServeMux()
-	sm.Handle("/register", web_handler.Register(s.AuthClient))
-	sm.Handle("/auth", web_handler.Auth(s.AuthClient))
+	sm.Handle("/register", web_handler.Register(s))
+	sm.Handle("/auth", web_handler.Auth(s))
 	s.WebServer = &http.Server{
 		Addr:        ":8080",
 		Handler:     sm,
@@ -61,7 +63,7 @@ func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 	log.Println("Starting server...")
 	go s.ServeWeb()
 	s.AuthClient.StartAuth(authConfig)
-	s.MailClient = mail_reciever.NewMailReciever(option.WithHTTPClient(s.AuthClient.GetClient(authConfig)), *authConfig)
+	s.MailClient = mail_reciever.NewMailReciever(option.WithHTTPClient(s.AuthClient.GetClient(authConfig)), *authConfig, s.projectID, s.ctx)
 	log.Println("Starting listener...")
 	go s.ListenForEmails()
 	log.Println("Authorization completed")
@@ -81,11 +83,27 @@ func (s *Server) ServeWeb() {
 }
 func (s *Server) ListenForEmails() {
 	pollInterval := 10 * time.Second
-	if err := s.MailClient.ListenForEmails(s.ctx, pollInterval, s.mailList); err != nil {
+	if err := s.MailClient.ListenForEmails(pollInterval, s.mailList, s.projectID); err != nil {
 		s.errChan <- err
 	}
 }
-func (s *Server) HandleEmail(mail *gmail.Message) {
+func (s *Server) HandleMessage(message mail_reciever.PubSubMessage) error {
+	if message.HistoryId == 0 {
+		return fmt.Errorf("empty history ID")
+	}
+
+	historyId := uint64(message.HistoryId)
+
+	msg, err := s.MailClient.GetMessageByHistory(historyId)
+	if err != nil {
+		return err
+	}
+	if err := s.HandleEmail(msg); err != nil {
+		return err
+	}
+	return nil
+}
+func (s *Server) HandleEmail(mail *gmail.Message) error {
 	var sender string
 	for _, header := range mail.Payload.Headers {
 		if header.Name == "From" {
@@ -100,12 +118,10 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 	log.Println("Processing email from: ", sender)
 	emails, err := s.AuthClient.GetEmails()
 	if err != nil {
-		log.Printf("Error getting emails: %v", err)
-		return
+		return err
 	}
 	if !slices.Contains(emails, sender) {
-		log.Printf("Email not from sender: %s, from: %s", emails, sender)
-		return
+		return fmt.Errorf("email not from sender: %s, from: %s", emails, sender)
 	}
 	authConfig := google_auth.AuthConfig{Email: sender, Scopes: []string{people.ContactsScope}}
 	user_auth := option.WithHTTPClient(s.AuthClient.GetClient(&authConfig))
@@ -113,8 +129,7 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 
 	mailContent, err := s.MailClient.GetMessage(mail.Id)
 	if err != nil {
-		log.Printf("Error getting message: %v", err)
-		return
+		return err
 	}
 	fullMailText := ""
 	for _, part := range mailContent.Payload.Parts {
@@ -131,13 +146,16 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 	log.Println(contact)
 	client_ca.AddContact(contact)
 	s.MailClient.Reply(mailContent.Id, contact)
+	return nil
 }
 
 func (s *Server) Run() {
 	for {
 		select {
-		case mail := <-s.mailList:
-			s.HandleEmail(mail)
+		case message := <-s.mailList:
+			if err := s.HandleMessage(message); err != nil {
+				s.errChan <- err
+			}
 		case err := <-s.errChan:
 			log.Printf("Server error: %v\n", err)
 			s.cancel()

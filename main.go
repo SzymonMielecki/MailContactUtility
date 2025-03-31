@@ -21,7 +21,7 @@ func main() {
 		Password: os.Getenv("DATABASE_PASSWORD"),
 		User:     "postgres",
 		Database: "tokens",
-	})
+	}, os.Getenv("PROJECT_ID"))
 	if err != nil {
 		log.Fatal(err)
 	}
