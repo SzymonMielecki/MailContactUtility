@@ -10,47 +10,51 @@ import (
 	"google.golang.org/api/people/v1"
 )
 
-func Register(w http.ResponseWriter, r *http.Request) {
-	email := r.URL.Query().Get("email")
-	if email == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, "Missing email parameter")
-		return
+func Register(a *google_auth.Auth) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		email := r.URL.Query().Get("email")
+		if email == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, "Missing email parameter")
+			return
+		}
+		emails, err := a.GetEmails()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if slices.Contains(emails, email) {
+			w.WriteHeader(http.StatusConflict)
+			fmt.Fprint(w, "Email already registered")
+			return
+		}
+		url := a.GetUrl(google_auth.AuthConfig{Email: email, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}})
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `<a href="`+url+`">Click here to authorize</a>`)
 	}
-	emails, err := google_auth.GetEmails()
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	if slices.Contains(emails, email) {
-		w.WriteHeader(http.StatusConflict)
-		fmt.Fprint(w, "Email already registered")
-		return
-	}
-	url := google_auth.GetUrl(google_auth.AuthConfig{Email: email, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}})
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, `<a href="`+url+`">Click here to authorize</a>`)
 }
-func Auth(w http.ResponseWriter, r *http.Request) {
-	state := r.URL.Query().Get("state")
-	if state == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, "Missing state parameter")
-		return
-	}
-	code := r.URL.Query().Get("code")
-	if code == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, "Missing code parameter")
-		return
-	}
+func Auth(a *google_auth.Auth) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		state := r.URL.Query().Get("state")
+		if state == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, "Missing state parameter")
+			return
+		}
+		code := r.URL.Query().Get("code")
+		if code == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, "Missing code parameter")
+			return
+		}
 
-	err := google_auth.HandleAuthCode(&google_auth.AuthConfig{Email: state, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}}, code)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, "Error: %v", err)
-		return
+		err := a.HandleAuthCode(&google_auth.AuthConfig{Email: state, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}}, code)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, "Error: %v", err)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "Successfully authorized! You can close this window.")
 	}
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, "Successfully authorized! You can close this window.")
 }

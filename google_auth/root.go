@@ -1,6 +1,7 @@
 package google_auth
 
 import (
+	"MailContactUtilty/database"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,10 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
+type Auth struct {
+	db *database.Database
+}
+
 type AuthConfig struct {
 	Email  string
 	Scopes []string
@@ -24,7 +29,13 @@ type TokenWithEmail struct {
 	Email string
 }
 
-func GetUrl(authConfig AuthConfig) string {
+func NewAuth(ctx context.Context, config database.DatabaseConfig) *Auth {
+	return &Auth{
+		db: database.NewDatabase(ctx, config),
+	}
+}
+
+func (a *Auth) GetUrl(authConfig AuthConfig) string {
 	email := authConfig.Email
 	scopes := authConfig.Scopes
 	b, err := os.ReadFile("credentials.json")
@@ -43,7 +54,7 @@ func GetUrl(authConfig AuthConfig) string {
 	return config.AuthCodeURL(email, opts...)
 }
 
-func HandleAuthCode(authConfig *AuthConfig, code string) error {
+func (a *Auth) HandleAuthCode(authConfig *AuthConfig, code string) error {
 	scopes := authConfig.Scopes
 	b, err := os.ReadFile("credentials.json")
 	if err != nil {
@@ -60,15 +71,15 @@ func HandleAuthCode(authConfig *AuthConfig, code string) error {
 		return fmt.Errorf("unable to retrieve token from web: %v", err)
 	}
 
-	SaveToken(authConfig, tok)
+	a.SaveToken(authConfig, tok)
 	return nil
 }
-func StartAuth(authConfig *AuthConfig) {
-	if _, err := TokenFromFile(authConfig); err != nil {
-		url := GetUrl(*authConfig)
+func (a *Auth) StartAuth(authConfig *AuthConfig) {
+	if _, err := a.TokenFromDb(authConfig); err != nil {
+		url := a.GetUrl(*authConfig)
 		fmt.Println("Please authorize at:", url)
 		for {
-			if _, err := TokenFromFile(authConfig); err == nil {
+			if _, err := a.TokenFromDb(authConfig); err == nil {
 				break
 			}
 			time.Sleep(1 * time.Second)
@@ -76,7 +87,7 @@ func StartAuth(authConfig *AuthConfig) {
 	}
 }
 
-func GetClient(authConfig *AuthConfig) *http.Client {
+func (a *Auth) GetClient(authConfig *AuthConfig) *http.Client {
 	scopes := authConfig.Scopes
 	b, err := os.ReadFile("credentials.json")
 	if err != nil {
@@ -87,34 +98,27 @@ func GetClient(authConfig *AuthConfig) *http.Client {
 	if err != nil {
 		log.Fatalf("Unable to parse client secret file to config: %v", err)
 	}
-	tok, err := TokenFromFile(authConfig)
+	tok, err := a.TokenFromDb(authConfig)
 	if err != nil {
 		log.Fatalf("Unable to retrieve token from file: %v", err)
 	}
 	return config.Client(context.Background(), tok)
 }
 
-func TokenFromFile(authConfig *AuthConfig) (*oauth2.Token, error) {
-	email := authConfig.Email
-	f, err := os.Open("tokens.json")
+func (a *Auth) TokenFromDb(authConfig *AuthConfig) (*oauth2.Token, error) {
+	token, err := a.db.GetToken(authConfig.Email)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	var tok []*TokenWithEmail
-	err = json.NewDecoder(f).Decode(&tok)
-	if err != nil {
-		return nil, err
-	}
-	for _, t := range tok {
-		if t.Email == email {
-			return t.Token, nil
-		}
-	}
-	return nil, fmt.Errorf("token not found for email: %s", email)
+	return &oauth2.Token{
+		RefreshToken: token.RefreshToken,
+		AccessToken:  token.AccessToken,
+		Expiry:       token.Expiry,
+		TokenType:    token.TokenType,
+	}, nil
 }
 
-func SaveToken(authConfig *AuthConfig, token *oauth2.Token) {
+func (a *Auth) SaveToken(authConfig *AuthConfig, token *oauth2.Token) {
 	email := authConfig.Email
 	var tok []*TokenWithEmail
 
@@ -133,35 +137,21 @@ func SaveToken(authConfig *AuthConfig, token *oauth2.Token) {
 	} else {
 		tok = append(tok, &TokenWithEmail{Token: token, Email: email})
 	}
-
-	f, err := os.OpenFile("tokens.json", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		log.Fatalf("Unable to cache oauth token: %v", err)
-	}
-	defer f.Close()
-
-	if err := json.NewEncoder(f).Encode(tok); err != nil {
-		log.Fatalf("Unable to encode token to file: %v", err)
+	if err := a.db.AddToken(database.Token{
+		Email:        email,
+		AccessToken:  token.AccessToken,
+		RefreshToken: token.RefreshToken,
+		Expiry:       token.Expiry,
+		TokenType:    token.TokenType,
+	}); err != nil {
+		log.Fatalf("Unable to add token to database: %v", err)
 	}
 }
 
-func GetEmails() ([]string, error) {
-	f, err := os.Open("tokens.json")
+func (a *Auth) GetEmails() ([]string, error) {
+	emails, err := a.db.GetEmails()
 	if err != nil {
 		return nil, err
-	}
-	defer f.Close()
-	var tok []*TokenWithEmail
-	err = json.NewDecoder(f).Decode(&tok)
-	if err != nil {
-		return nil, err
-	}
-	emails := make([]string, len(tok))
-	for i, t := range tok {
-		if t.Email == "contacterutil@gmail.com" {
-			continue
-		}
-		emails[i] = t.Email
 	}
 	return emails, nil
 }
