@@ -33,21 +33,26 @@ type Server struct {
 	mailList      chan *gmail.Message
 }
 
-func NewServer(dbConfig database.DatabaseConfig) *Server {
+func NewServer(dbConfig database.DatabaseConfig) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+	auth, err := google_auth.NewAuth(ctx, dbConfig)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
 	return &Server{
-		AuthClient:    google_auth.NewAuth(ctx, dbConfig),
+		AuthClient:    auth,
 		errChan:       make(chan error, 1),
 		ctx:           ctx,
 		cancel:        cancel,
 		mailList:      make(chan *gmail.Message),
 		ContactClient: contact_generator.NewContactGenerator(),
-	}
+	}, nil
 }
 func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 	sm := http.NewServeMux()
-	sm.HandleFunc("/register", web_handler.Register(s.AuthClient))
-	sm.HandleFunc("/auth", web_handler.Auth(s.AuthClient))
+	sm.Handle("/register", web_handler.Register(s.AuthClient))
+	sm.Handle("/auth", web_handler.Auth(s.AuthClient))
 	s.WebServer = &http.Server{
 		Addr:        ":8080",
 		Handler:     sm,
@@ -65,6 +70,7 @@ func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 }
 func (s *Server) Close() {
 	s.ContactClient.Close()
+	s.cancel()
 }
 func (s *Server) ServeWeb() {
 	fmt.Println("Server started on :8080")

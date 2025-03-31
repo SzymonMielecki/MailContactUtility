@@ -4,7 +4,6 @@ import (
 	"MailContactUtilty/database"
 	"MailContactUtilty/google_auth"
 	"MailContactUtilty/server"
-	"fmt"
 	"log"
 	"os"
 
@@ -17,22 +16,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println("Creating server...")
-	s := server.NewServer(database.DatabaseConfig{
-		Host:     os.Getenv("DATABASE_HOST"),
-		Password: os.Getenv("DATABASE_PASSWORD"),
-		User:     "postgres",
-		Name:     "tokens",
-	})
-	fmt.Println("Starting server...")
-	fmt.Println("Creating server...")
-	s := server.NewServer(database.DatabaseConfig{
+	s, err := server.NewServer(database.DatabaseConfig{
 		Host:     os.Getenv("DATABASE_HOST"),
 		Password: os.Getenv("DATABASE_PASSWORD"),
 		User:     "postgres",
 		Database: "tokens",
 	})
-	fmt.Println("Starting server...")
+	if err != nil {
+		log.Fatal(err)
+	}
 	s.Start(&google_auth.AuthConfig{
 		Email:  "contacterutil@gmail.com",
 		Scopes: []string{gmail.GmailReadonlyScope, gmail.GmailModifyScope},
