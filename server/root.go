@@ -3,6 +3,7 @@ package server
 import (
 	"MailContactUtilty/contact_adder"
 	"MailContactUtilty/contact_generator"
+	"MailContactUtilty/database"
 	"MailContactUtilty/google_auth"
 	"MailContactUtilty/mail_reciever"
 	"MailContactUtilty/web_handler"
@@ -29,11 +30,13 @@ type Server struct {
 	cancel    context.CancelFunc
 	errChan   chan error
 	mailList  chan *gmail.Message
+	auth      *google_auth.Auth
 }
 
-func NewServer() *Server {
+func NewServer(dbConfig database.DatabaseConfig) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Server{
+		auth:    google_auth.NewAuth(ctx, dbConfig),
 		errChan: make(chan error, 1),
 		ctx:     ctx,
 		cancel:  cancel,
@@ -41,8 +44,8 @@ func NewServer() *Server {
 }
 func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 	sm := http.NewServeMux()
-	sm.HandleFunc("/register", web_handler.Register)
-	sm.HandleFunc("/auth", web_handler.Auth)
+	sm.HandleFunc("/register", web_handler.Register(s.auth))
+	sm.HandleFunc("/auth", web_handler.Auth(s.auth))
 	s.webServer = &http.Server{
 		Addr:        ":8080",
 		Handler:     sm,
@@ -51,9 +54,8 @@ func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 	s.mailList = make(chan *gmail.Message)
 	log.Println("Starting server...")
 	go s.ServeWeb()
-	google_auth.StartAuth(authConfig)
 	s.client_cg = contact_generator.NewContactGenerator()
-	s.client_mr = mail_reciever.NewMailReciever(option.WithHTTPClient(google_auth.GetClient(authConfig)), *authConfig)
+	s.client_mr = mail_reciever.NewMailReciever(option.WithHTTPClient(s.auth.GetClient(authConfig)), *authConfig)
 	log.Println("Starting listener...")
 	go s.ListenForEmails()
 	log.Println("Authorization completed")
@@ -89,7 +91,7 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 		}
 	}
 	log.Println("Processing email from: ", sender)
-	emails, err := google_auth.GetEmails()
+	emails, err := s.auth.GetEmails()
 	if err != nil {
 		log.Printf("Error getting emails: %v", err)
 		return
@@ -99,7 +101,7 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 		return
 	}
 	authConfig := google_auth.AuthConfig{Email: sender, Scopes: []string{people.ContactsScope}}
-	user_auth := option.WithHTTPClient(google_auth.GetClient(&authConfig))
+	user_auth := option.WithHTTPClient(s.auth.GetClient(&authConfig))
 	client_ca := contact_adder.NewContactAdder(user_auth)
 
 	mailContent, err := s.client_mr.GetMessage(mail.Id)
