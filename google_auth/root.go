@@ -2,7 +2,6 @@ package google_auth
 
 import (
 	"MailContactUtilty/database"
-	"MailContactUtilty/database"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -20,10 +19,6 @@ type Auth struct {
 	db *database.Database
 }
 
-type Auth struct {
-	db *database.Database
-}
-
 type AuthConfig struct {
 	Email  string
 	Scopes []string
@@ -34,14 +29,14 @@ type TokenWithEmail struct {
 	Email string
 }
 
-func NewAuth(ctx context.Context, config database.DatabaseConfig) *Auth {
+func NewAuth(ctx context.Context, config database.DatabaseConfig) (*Auth, error) {
 	db, err := database.NewDatabase(ctx, config)
 	if err != nil {
-		log.Fatalf("Unable to create database: %v", err)
+		return nil, err
 	}
 	return &Auth{
 		db: db,
-	}
+	}, nil
 }
 
 func (a *Auth) GetUrl(authConfig AuthConfig) string {
@@ -64,7 +59,6 @@ func (a *Auth) GetUrl(authConfig AuthConfig) string {
 }
 
 func (a *Auth) HandleAuthCode(authConfig *AuthConfig, code string) error {
-func (a *Auth) HandleAuthCode(authConfig *AuthConfig, code string) error {
 	scopes := authConfig.Scopes
 	b, err := os.ReadFile("credentials.json")
 	if err != nil {
@@ -82,18 +76,13 @@ func (a *Auth) HandleAuthCode(authConfig *AuthConfig, code string) error {
 	}
 
 	a.SaveToken(authConfig, tok)
-	a.SaveToken(authConfig, tok)
 	return nil
 }
 func (a *Auth) StartAuth(authConfig *AuthConfig) {
 	if _, err := a.TokenFromDb(authConfig); err != nil {
 		url := a.GetUrl(*authConfig)
-func (a *Auth) StartAuth(authConfig *AuthConfig) {
-	if _, err := a.TokenFromDb(authConfig); err != nil {
-		url := a.GetUrl(*authConfig)
 		fmt.Println("Please authorize at:", url)
 		for {
-			if _, err := a.TokenFromDb(authConfig); err == nil {
 			if _, err := a.TokenFromDb(authConfig); err == nil {
 				break
 			}
@@ -102,7 +91,6 @@ func (a *Auth) StartAuth(authConfig *AuthConfig) {
 	}
 }
 
-func (a *Auth) GetClient(authConfig *AuthConfig) *http.Client {
 func (a *Auth) GetClient(authConfig *AuthConfig) *http.Client {
 	scopes := authConfig.Scopes
 	b, err := os.ReadFile("credentials.json")
@@ -115,15 +103,12 @@ func (a *Auth) GetClient(authConfig *AuthConfig) *http.Client {
 		log.Fatalf("Unable to parse client secret file to config: %v", err)
 	}
 	tok, err := a.TokenFromDb(authConfig)
-	tok, err := a.TokenFromDb(authConfig)
 	if err != nil {
 		log.Fatalf("Unable to retrieve token from file: %v", err)
 	}
 	return config.Client(context.Background(), tok)
 }
 
-func (a *Auth) TokenFromDb(authConfig *AuthConfig) (*oauth2.Token, error) {
-	token, err := a.db.GetToken(authConfig.Email)
 func (a *Auth) TokenFromDb(authConfig *AuthConfig) (*oauth2.Token, error) {
 	token, err := a.db.GetToken(authConfig.Email)
 	if err != nil {
@@ -135,15 +120,8 @@ func (a *Auth) TokenFromDb(authConfig *AuthConfig) (*oauth2.Token, error) {
 		Expiry:       token.Expiry,
 		TokenType:    token.TokenType,
 	}, nil
-	return &oauth2.Token{
-		RefreshToken: token.RefreshToken,
-		AccessToken:  token.AccessToken,
-		Expiry:       token.Expiry,
-		TokenType:    token.TokenType,
-	}, nil
 }
 
-func (a *Auth) SaveToken(authConfig *AuthConfig, token *oauth2.Token) {
 func (a *Auth) SaveToken(authConfig *AuthConfig, token *oauth2.Token) {
 	email := authConfig.Email
 	var tok []*TokenWithEmail
@@ -171,19 +149,9 @@ func (a *Auth) SaveToken(authConfig *AuthConfig, token *oauth2.Token) {
 		TokenType:    token.TokenType,
 	}); err != nil {
 		log.Fatalf("Unable to add token to database: %v", err)
-	if err := a.db.AddToken(database.Token{
-		Email:        email,
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		Expiry:       token.Expiry,
-		TokenType:    token.TokenType,
-	}); err != nil {
-		log.Fatalf("Unable to add token to database: %v", err)
 	}
 }
 
-func (a *Auth) GetEmails() ([]string, error) {
-	emails, err := a.db.GetEmails()
 func (a *Auth) GetEmails() ([]string, error) {
 	emails, err := a.db.GetEmails()
 	if err != nil {
