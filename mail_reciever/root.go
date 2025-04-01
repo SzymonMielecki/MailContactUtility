@@ -105,6 +105,12 @@ func (mr *MailReciever) GetMessages() ([]*gmail.Message, error) {
 	}
 	mr.lastHistoryId = history.HistoryId
 	mr.history = history.History
+	messages := []*gmail.Message{}
+	for _, history := range mr.history {
+		if history.Messages != nil {
+			messages = append(messages, history.Messages...)
+		}
+	}
 
 	return messages, nil
 }
