@@ -47,27 +47,24 @@ func NewServer(dbConfig database.DatabaseConfig, projectID string) (*Server, err
 		errChan:       make(chan error, 1),
 		ctx:           ctx,
 		cancel:        cancel,
-		mailList:      make(chan mail_reciever.PubSubMessage),
+		MailList:      make(chan *gmail.Message),
 		ContactClient: contact_generator.NewContactGenerator(),
 	}, nil
 }
 func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 	sm := http.NewServeMux()
-	sm.Handle("/register", web_handler.Register(s))
-	sm.Handle("/auth", web_handler.Auth(s))
+	sm.Handle("/register", web_handler.Register(s.AuthClient))
+	sm.Handle("/auth", web_handler.Auth(s.AuthClient))
+	s.AuthClient.StartAuth(authConfig)
+	s.MailClient = mail_reciever.NewMailReciever(option.WithHTTPClient(s.AuthClient.GetClient(authConfig)), *authConfig, s.projectID, s.ctx)
+	sm.Handle("/email", web_handler.HandleEmail(s.MailClient, s.MailList))
 	s.WebServer = &http.Server{
 		Addr:        ":8080",
 		Handler:     sm,
 		BaseContext: func(_ net.Listener) context.Context { return s.ctx },
 	}
-	log.Println("Starting server...")
 	go s.ServeWeb()
-	s.AuthClient.StartAuth(authConfig)
-	s.MailClient = mail_reciever.NewMailReciever(option.WithHTTPClient(s.AuthClient.GetClient(authConfig)), *authConfig, s.projectID, s.ctx)
-	log.Println("Starting listener...")
-	go s.ListenForEmails()
-	log.Println("Authorization completed")
-	log.Println("Starting main loop...")
+	go s.MailClient.ListenForEmails(10*time.Second, s.MailList, s.projectID)
 	s.Run()
 }
 func (s *Server) Close() {
@@ -80,28 +77,6 @@ func (s *Server) ServeWeb() {
 		s.errChan <- err
 	}
 	close(s.errChan)
-}
-func (s *Server) ListenForEmails() {
-	pollInterval := 10 * time.Second
-	if err := s.MailClient.ListenForEmails(pollInterval, s.mailList, s.projectID); err != nil {
-		s.errChan <- err
-	}
-}
-func (s *Server) HandleMessage(message mail_reciever.PubSubMessage) error {
-	if message.HistoryId == 0 {
-		return fmt.Errorf("empty history ID")
-	}
-
-	historyId := uint64(message.HistoryId)
-
-	msg, err := s.MailClient.GetMessageByHistory(historyId)
-	if err != nil {
-		return err
-	}
-	if err := s.HandleEmail(msg); err != nil {
-		return err
-	}
-	return nil
 }
 func (s *Server) HandleEmail(mail *gmail.Message) error {
 	var sender string
@@ -152,8 +127,8 @@ func (s *Server) HandleEmail(mail *gmail.Message) error {
 func (s *Server) Run() {
 	for {
 		select {
-		case message := <-s.mailList:
-			if err := s.HandleMessage(message); err != nil {
+		case mail := <-s.MailList:
+			if err := s.HandleEmail(mail); err != nil {
 				s.errChan <- err
 			}
 		case err := <-s.errChan:

@@ -17,15 +17,18 @@ import (
 )
 
 type MailReciever struct {
-	PubSubClient *pubsub.Client
-	Topic        *pubsub.Topic
-	Service      *gmail.Service
-	Email        string
-	ctx          context.Context
+	PubSubClient  *pubsub.Client
+	Topic         *pubsub.Topic
+	Service       *gmail.Service
+	Email         string
+	ctx           context.Context
+	lastHistoryId uint64
+	history       []*gmail.History
 }
+
 type PubSubMessage struct {
 	Email     string `json:"emailAddress"`
-	HistoryId int64  `json:"historyId"`
+	HistoryId uint64 `json:"historyId"`
 }
 
 func NewMailReciever(clientOption option.ClientOption, authConfig google_auth.AuthConfig, projectID string, ctx context.Context) *MailReciever {
@@ -51,7 +54,12 @@ func NewMailReciever(clientOption option.ClientOption, authConfig google_auth.Au
 			log.Fatalf("Unable to create topic: %v", err)
 		}
 	}
-	return &MailReciever{PubSubClient: pubSubClient, Topic: topic, Service: srv, Email: authConfig.Email, ctx: ctx}
+	mr := &MailReciever{PubSubClient: pubSubClient, Topic: topic, Service: srv, Email: authConfig.Email, ctx: ctx}
+	_, err = mr.GetMessages()
+	if err != nil {
+		log.Fatalf("Unable to get messages: %v", err)
+	}
+	return mr
 }
 
 func (mr *MailReciever) Reply(id string, contact helper.Contact) error {
@@ -90,16 +98,18 @@ func (mr *MailReciever) Reply(id string, contact helper.Contact) error {
 }
 
 func (mr *MailReciever) GetMessages() ([]*gmail.Message, error) {
-	userId := "me"
-	messages, err := mr.Service.Users.Messages.List(userId).Do()
+	history, err := mr.Service.Users.History.List("me").StartHistoryId(mr.lastHistoryId).Do()
 	if err != nil {
 		log.Printf("Unable to retrieve messages: %v, email: %s", err, mr.Email)
 		return nil, err
 	}
-	return messages.Messages, nil
+	mr.lastHistoryId = history.HistoryId
+	mr.history = history.History
+
+	return messages, nil
 }
 
-func (mr *MailReciever) ListenForEmails(pollInterval time.Duration, messageChan chan<- PubSubMessage, projectID string) error {
+func (mr *MailReciever) ListenForEmails(pollInterval time.Duration, messageChan chan<- *gmail.Message, projectID string) error {
 	log.Printf("Setting up Gmail watch for inbox: %s", mr.Email)
 	_, err := mr.Service.Users.Watch("me", &gmail.WatchRequest{
 		LabelIds:  []string{"INBOX"},
@@ -142,7 +152,13 @@ func (mr *MailReciever) ListenForEmails(pollInterval time.Duration, messageChan 
 			return
 		}
 		fmt.Println("Received message:", pubSubMessage)
-		messageChan <- pubSubMessage
+		message, err := mr.GetMessageByHistory(pubSubMessage.HistoryId)
+		if err != nil {
+			log.Printf("Unable to get message: %v", err)
+			m.Ack()
+			return
+		}
+		messageChan <- message
 		m.Ack()
 	})
 	if err != nil {
@@ -152,29 +168,12 @@ func (mr *MailReciever) ListenForEmails(pollInterval time.Duration, messageChan 
 }
 
 func (mr *MailReciever) GetMessageByHistory(historyId uint64) (*gmail.Message, error) {
-	log.Printf("Fetching history for ID: %d", historyId)
-	historyList, err := mr.Service.Users.History.List("me").StartHistoryId(historyId).Do()
-	if err != nil {
-		log.Printf("Unable to retrieve history: %v", err)
-		return nil, err
-	}
-
-	log.Printf("Got history response with %d items", len(historyList.History))
-	for _, history := range historyList.History {
-		if len(history.MessagesAdded) > 0 {
-			msgId := history.MessagesAdded[0].Message.Id
-			log.Printf("Found message ID: %s", msgId)
-			return mr.GetMessage(msgId)
-		}
-		if len(history.Messages) > 0 {
-			msgId := history.Messages[0].Id
-			log.Printf("Found message in history: %s", msgId)
-			return mr.GetMessage(msgId)
+	for _, history := range mr.history {
+		if history.Id == historyId {
+			return mr.GetMessage(history.Messages[len(history.Messages)-1].Id)
 		}
 	}
-
-	log.Printf("No messages found in history ID: %d", historyId)
-	return nil, fmt.Errorf("no messages found in history starting from ID: %d", historyId)
+	return nil, fmt.Errorf("message not found for history ID: %d", historyId)
 }
 
 func (mr *MailReciever) GetMessage(id string) (*gmail.Message, error) {
@@ -185,13 +184,4 @@ func (mr *MailReciever) GetMessage(id string) (*gmail.Message, error) {
 	}
 	return msg, nil
 
-}
-
-func (mr *MailReciever) GetEmail() (string, error) {
-	profile, err := mr.Service.Users.GetProfile("me").Do()
-	if err != nil {
-		log.Fatalf("Unable to retrieve user profile: %v", err)
-		return "", err
-	}
-	return profile.EmailAddress, nil
 }
