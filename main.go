@@ -5,7 +5,6 @@ import (
 	"MailContactUtilty/google_auth"
 	"MailContactUtilty/server"
 	"log"
-	"os"
 
 	"github.com/joho/godotenv"
 	"google.golang.org/api/gmail/v1"
@@ -17,8 +16,8 @@ func main() {
 	}
 
 	s, err := server.NewServer(database.DatabaseConfig{
-		Host:     os.Getenv("DATABASE_HOST"),
-		Password: os.Getenv("DATABASE_PASSWORD"),
+		Host:     "localhost",
+		Password: "postgres",
 		User:     "postgres",
 		Database: "tokens",
 	})
