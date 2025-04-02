@@ -46,7 +46,7 @@ func NewServer(dbConfig database.DatabaseConfig) (*Server, error) {
 		ctx:           ctx,
 		cancel:        cancel,
 		mailList:      make(chan *gmail.Message),
-		ContactClient: contact_generator.NewContactGenerator(),
+		ContactClient: contact_generator.NewContactGenerator(ctx),
 	}, nil
 }
 func (s *Server) Start(authConfig *google_auth.AuthConfig) {
@@ -61,7 +61,7 @@ func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 	log.Println("Starting server...")
 	go s.ServeWeb()
 	s.AuthClient.StartAuth(authConfig)
-	s.MailClient = mail_reciever.NewMailReciever(option.WithHTTPClient(s.AuthClient.GetClient(authConfig)), *authConfig)
+	s.MailClient = mail_reciever.NewMailReciever(option.WithHTTPClient(s.AuthClient.GetClient(authConfig)), *authConfig, s.ctx)
 	log.Println("Starting listener...")
 	go s.ListenForEmails()
 	log.Println("Authorization completed")
@@ -80,8 +80,7 @@ func (s *Server) ServeWeb() {
 	close(s.errChan)
 }
 func (s *Server) ListenForEmails() {
-	pollInterval := 10 * time.Second
-	if err := s.MailClient.ListenForEmails(s.ctx, pollInterval, s.mailList); err != nil {
+	if err := s.MailClient.ListenForEmails(s.mailList); err != nil {
 		s.errChan <- err
 	}
 }
@@ -130,7 +129,10 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 	contact := s.ContactClient.Generate(fullMailText)
 	log.Println(contact)
 	client_ca.AddContact(contact)
-	s.MailClient.Reply(mailContent.Id, contact)
+	err = s.MailClient.Reply(mailContent.Id, contact, mailContent, sender)
+	if err != nil {
+		log.Printf("Error replying to message: %v", err)
+	}
 }
 
 func (s *Server) Run() {
