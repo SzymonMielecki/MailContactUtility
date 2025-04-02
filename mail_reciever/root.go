@@ -5,47 +5,53 @@ import (
 	"MailContactUtilty/helper"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
+	"cloud.google.com/go/pubsub"
 	"google.golang.org/api/gmail/v1"
 	"google.golang.org/api/option"
 )
 
 type MailReciever struct {
 	*gmail.Service
-	Email string
+	Email        string
+	PubSubClient *pubsub.Client
+	ctx          context.Context
 }
 
-func (mr *MailReciever) Reply(id string, contact helper.Contact) error {
-	originalMsg, err := mr.GetMessage(id)
-	if err != nil {
-		return fmt.Errorf("unable to get original message: %v", err)
-	}
+type PubSubMessage struct {
+	Email     string `json:"emailAddress"`
+	HistoryId uint64 `json:"historyId"`
+}
 
-	emailContent := fmt.Sprintf("Subject: Re: Contact Added\r\n"+
-		"References: %s\r\n"+
-		"In-Reply-To: %s\r\n"+
-		"Content-Type: text/plain; charset=UTF-8\r\n\r\n"+
-		"Thank you for your email. I've added the following contact information:\n"+
+func (mr *MailReciever) Reply(id string, contact helper.Contact, originalMsg *gmail.Message, sender string) error {
+	emailContent := fmt.Sprintf("Thank you for your email. I've added the following contact information:\n"+
 		"Name: %s\n"+
 		"Surname: %s\n"+
 		"Email: %s\n"+
 		"Phone: %s",
-		originalMsg.Id,
-		originalMsg.Id,
 		contact.Name,
 		contact.Surname,
 		contact.Email,
 		contact.Phone)
 
+	rawMessage := "From: " + mr.Email + "\r\n" +
+		"To: " + sender + "\r\n" +
+		"Subject: Re: Contact Added\r\n" +
+		"References: " + originalMsg.Id + "\r\n" +
+		"In-Reply-To: " + originalMsg.Id + "\r\n" +
+		"Content-Type: text/plain; charset=UTF-8\r\n\r\n" +
+		emailContent
+
 	message := &gmail.Message{
-		Raw:      base64.URLEncoding.EncodeToString([]byte(emailContent)),
+		Raw:      base64.URLEncoding.EncodeToString([]byte(rawMessage)),
 		ThreadId: originalMsg.ThreadId,
 	}
 
-	_, err = mr.Service.Users.Messages.Send("me", message).Do()
+	_, err := mr.Service.Users.Messages.Send("me", message).Context(mr.ctx).Do()
 	if err != nil {
 		return fmt.Errorf("unable to send reply: %v", err)
 	}
@@ -53,17 +59,20 @@ func (mr *MailReciever) Reply(id string, contact helper.Contact) error {
 	return nil
 }
 
-func NewMailReciever(clientOption option.ClientOption, authConfig google_auth.AuthConfig) *MailReciever {
-	srv, err := gmail.NewService(context.TODO(), clientOption)
+func NewMailReciever(clientOption option.ClientOption, authConfig google_auth.AuthConfig, ctx context.Context) *MailReciever {
+	srv, err := gmail.NewService(ctx, clientOption)
 	if err != nil {
 		log.Printf("Unable to create people Client %v", err)
 	}
-	return &MailReciever{Service: srv, Email: authConfig.Email}
+	pubSubClient, err := pubsub.NewClient(ctx, "core-shard-423110-m7")
+	if err != nil {
+		log.Printf("Unable to create pubsub client %v", err)
+	}
+	return &MailReciever{Service: srv, Email: authConfig.Email, PubSubClient: pubSubClient, ctx: ctx}
 }
 
 func (mr *MailReciever) GetMessages() ([]*gmail.Message, error) {
-	userId := "me"
-	messages, err := mr.Service.Users.Messages.List(userId).Do()
+	messages, err := mr.Service.Users.Messages.List("me").Context(mr.ctx).Do()
 	if err != nil {
 		log.Printf("Unable to retrieve messages: %v, email: %s", err, mr.Email)
 		return nil, err
@@ -71,53 +80,108 @@ func (mr *MailReciever) GetMessages() ([]*gmail.Message, error) {
 	return messages.Messages, nil
 }
 
-func (mr *MailReciever) ListenForEmails(ctx context.Context, pollInterval time.Duration, channel chan<- *gmail.Message) error {
-	knownMessageIds := make(map[string]bool)
-
-	messages, err := mr.GetMessages()
+func (mr *MailReciever) GetUnreadMessages() ([]*gmail.Message, error) {
+	messages, err := mr.Service.Users.Messages.List("me").Q("is:unread").Context(mr.ctx).Do()
 	if err != nil {
-		return err
+		log.Printf("Unable to retrieve messages: %v, email: %s", err, mr.Email)
+		return nil, err
 	}
-	for _, msg := range messages {
-		knownMessageIds[msg.Id] = true
+	return messages.Messages, nil
+}
+
+func (mr *MailReciever) ListenForEmails(target chan<- *gmail.Message) error {
+	messageAlert := make(chan PubSubMessage)
+
+	exists, err := mr.PubSubClient.Topic("gmail-watcher").Exists(mr.ctx)
+	if err != nil {
+		log.Fatalf("Unable to check if topic exists: %v", err)
 	}
 
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
+	if !exists {
+		_, err = mr.PubSubClient.CreateTopic(mr.ctx, "gmail-watcher")
+		if err != nil {
+			log.Fatalf("Unable to create topic: %v", err)
+		}
+	}
+	_, err = mr.Service.Users.Watch("me", &gmail.WatchRequest{
+		LabelIds:  []string{"INBOX"},
+		TopicName: "projects/core-shard-423110-m7/topics/gmail-watcher",
+	}).Context(mr.ctx).Do()
+	if err != nil {
+		return fmt.Errorf("unable to watch for emails: %v", err)
+	}
+	sub := mr.PubSubClient.Subscription("gmail-watcher-sub")
+	exists, err = sub.Exists(mr.ctx)
+	if err != nil {
+		return fmt.Errorf("failed to check subscription existence: %v", err)
+	}
+
+	if !exists {
+		log.Printf("Creating new subscription: %s", "gmail-watcher-sub")
+		sub, err = mr.PubSubClient.CreateSubscription(mr.ctx, "gmail-watcher-sub", pubsub.SubscriptionConfig{
+			Topic:            mr.PubSubClient.Topic("gmail-watcher"),
+			AckDeadline:      10 * time.Second,
+			ExpirationPolicy: 24 * time.Hour,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create subscription: %v", err)
+		}
+		log.Printf("Successfully created subscription")
+	} else {
+		log.Printf("Using existing subscription: %s", "gmail-watcher-sub")
+	}
+	log.Printf("Starting to receive messages...")
+	go func() {
+		err = sub.Receive(mr.ctx, func(ctx context.Context, m *pubsub.Message) {
+			var pubSubMessage PubSubMessage
+			if err := json.Unmarshal(m.Data, &pubSubMessage); err != nil {
+				log.Printf("Unable to unmarshal message: %v", err)
+				m.Ack()
+				return
+			}
+			log.Println("Received message:", pubSubMessage)
+			messageAlert <- pubSubMessage
+			m.Ack()
+		})
+	}()
 
 	for {
+		log.Println("Checking for new emails...")
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
+		case <-mr.ctx.Done():
+			return mr.ctx.Err()
+		case <-messageAlert:
 			log.Println("Checking for new emails...")
-			newMessages, err := mr.GetMessages()
+			newMessages, err := mr.GetUnreadMessages()
 			if err != nil {
 				log.Printf("Error fetching messages: %v", err)
 				continue
 			}
 
 			for _, msg := range newMessages {
-				if !knownMessageIds[msg.Id] {
-					fullMsg, err := mr.GetMessage(msg.Id)
-					if err != nil {
-						log.Printf("Error fetching message details: %v", err)
-						continue
-					}
-
-					to := getHeader(fullMsg.Payload.Headers, "To")
-					if to != "contacterutil@gmail.com" {
-						log.Printf("Skipping email not sent to contacterutil@gmail.com: %s", to)
-						continue
-					}
-
-					log.Printf("New email received - Subject: %s, From: %s", getHeader(fullMsg.Payload.Headers, "Subject"), getHeader(fullMsg.Payload.Headers, "From"))
-					channel <- fullMsg
-					knownMessageIds[msg.Id] = true
+				fullMsg, err := mr.GetMessage(msg.Id)
+				if err != nil {
+					log.Printf("Error fetching message details: %v", err)
+					continue
 				}
+
+				log.Printf("New email received - Subject: %s, From: %s", getHeader(fullMsg.Payload.Headers, "Subject"), getHeader(fullMsg.Payload.Headers, "From"))
+				target <- fullMsg
+				mr.MarkAsRead(msg.Id)
 			}
 		}
 	}
+}
+
+func (mr *MailReciever) MarkAsRead(id string) error {
+	_, err := mr.Service.Users.Messages.Modify("me", id, &gmail.ModifyMessageRequest{
+		RemoveLabelIds: []string{"UNREAD"},
+	}).Do()
+	if err != nil {
+		log.Printf("Unable to mark message as read: %v", err)
+		return err
+	}
+	return nil
 }
 
 func getHeader(headers []*gmail.MessagePartHeader, name string) string {

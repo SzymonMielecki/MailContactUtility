@@ -24,7 +24,7 @@ func NewContactAdder(clientOption option.ClientOption) *ContactAdder {
 }
 
 func (ca *ContactAdder) AddContact(contact helper.Contact) (helper.Contact, error) {
-	p, err := ca.People.CreateContact(&people.Person{
+	_, err := ca.People.CreateContact(&people.Person{
 		Names: []*people.Name{
 			{
 				GivenName:  contact.Name,
@@ -51,10 +51,5 @@ func (ca *ContactAdder) AddContact(contact helper.Contact) (helper.Contact, erro
 		log.Fatalf("Unable to create contact: %v", err)
 		return helper.Contact{}, err
 	}
-	return helper.Contact{
-		Name:    p.Names[0].GivenName,
-		Surname: p.Names[0].FamilyName,
-		Email:   p.EmailAddresses[0].Value,
-		Phone:   p.PhoneNumbers[0].Value,
-	}, nil
+	return contact, nil
 }

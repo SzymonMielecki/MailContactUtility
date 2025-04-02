@@ -35,8 +35,7 @@ func Register(a *google_auth.Auth) http.HandlerFunc {
 		}
 		url := a.GetUrl(google_auth.AuthConfig{Email: email, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}})
 		w.WriteHeader(http.StatusOK)
-		MessageScreen("Redirecting to authorization", fmt.Sprintf("Redirecting to authorization: %s", url)).Render(r.Context(), w)
-		http.Redirect(w, r, url, http.StatusSeeOther)
+		RedirectScreen(url).Render(r.Context(), w)
 	}
 }
 func Auth(a *google_auth.Auth) http.HandlerFunc {
