@@ -39,12 +39,12 @@ func NewDatabase(ctx context.Context, config DatabaseConfig) (*Database, error) 
 }
 
 func (d *Database) AddToken(token Token) error {
-	return d.db.Create(&token).Error
+	return d.db.Model(&Token{}).Create(&token).Error
 }
 
 func (d *Database) GetEmails() ([]string, error) {
 	var emails []string
-	if err := d.db.Find(&emails).Error; err != nil {
+	if err := d.db.Model(&Token{}).Pluck("email", &emails).Error; err != nil {
 		return nil, err
 	}
 	return emails, nil
@@ -52,7 +52,7 @@ func (d *Database) GetEmails() ([]string, error) {
 
 func (d *Database) GetToken(email string) (Token, error) {
 	var token Token
-	if err := d.db.Where("email = ?", email).First(&token).Error; err != nil {
+	if err := d.db.Model(&Token{}).Where("email = ?", email).First(&token).Error; err != nil {
 		return Token{}, err
 	}
 	return token, nil
