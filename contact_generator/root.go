@@ -27,10 +27,11 @@ func NewContactGenerator() *ContactGenerator {
 	model.ResponseSchema = &genai.Schema{
 		Type: genai.TypeObject,
 		Properties: map[string]*genai.Schema{
-			"Name":    {Type: genai.TypeString},
-			"Surname": {Type: genai.TypeString},
-			"Email":   {Type: genai.TypeString},
-			"Phone":   {Type: genai.TypeString},
+			"Name":         {Type: genai.TypeString},
+			"Surname":      {Type: genai.TypeString},
+			"Email":        {Type: genai.TypeString},
+			"Phone":        {Type: genai.TypeString},
+			"Organization": {Type: genai.TypeString},
 		},
 	}
 	return &ContactGenerator{

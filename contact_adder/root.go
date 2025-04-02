@@ -41,6 +41,11 @@ func (ca *ContactAdder) AddContact(contact helper.Contact) (helper.Contact, erro
 				Value: contact.Phone,
 			},
 		},
+		Organizations: []*people.Organization{
+			{
+				Name: contact.Organization,
+			},
+		},
 	}).Do()
 	if err != nil {
 		log.Fatalf("Unable to create contact: %v", err)
