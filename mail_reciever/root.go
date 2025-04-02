@@ -17,13 +17,11 @@ import (
 )
 
 type MailReciever struct {
-	PubSubClient  *pubsub.Client
-	Topic         *pubsub.Topic
-	Service       *gmail.Service
-	Email         string
-	ctx           context.Context
-	lastHistoryId uint64
-	history       []*gmail.History
+	PubSubClient *pubsub.Client
+	Topic        *pubsub.Topic
+	Service      *gmail.Service
+	Email        string
+	ctx          context.Context
 }
 
 type PubSubMessage struct {
@@ -54,12 +52,7 @@ func NewMailReciever(clientOption option.ClientOption, authConfig google_auth.Au
 			log.Fatalf("Unable to create topic: %v", err)
 		}
 	}
-	mr := &MailReciever{PubSubClient: pubSubClient, Topic: topic, Service: srv, Email: authConfig.Email, ctx: ctx}
-	_, err = mr.GetMessages()
-	if err != nil {
-		log.Fatalf("Unable to get messages: %v", err)
-	}
-	return mr
+	return &MailReciever{PubSubClient: pubSubClient, Topic: topic, Service: srv, Email: authConfig.Email, ctx: ctx}
 }
 
 func (mr *MailReciever) Reply(id string, contact helper.Contact) error {
@@ -97,25 +90,7 @@ func (mr *MailReciever) Reply(id string, contact helper.Contact) error {
 	return nil
 }
 
-func (mr *MailReciever) GetMessages() ([]*gmail.Message, error) {
-	history, err := mr.Service.Users.History.List("me").StartHistoryId(mr.lastHistoryId).Do()
-	if err != nil {
-		log.Printf("Unable to retrieve messages: %v, email: %s", err, mr.Email)
-		return nil, err
-	}
-	mr.lastHistoryId = history.HistoryId
-	mr.history = history.History
-	messages := []*gmail.Message{}
-	for _, history := range mr.history {
-		if history.Messages != nil {
-			messages = append(messages, history.Messages...)
-		}
-	}
-
-	return messages, nil
-}
-
-func (mr *MailReciever) ListenForEmails(pollInterval time.Duration, messageChan chan<- *gmail.Message, projectID string) error {
+func (mr *MailReciever) ListenForEmails(messageAlert chan<- interface{}, projectID string) error {
 	log.Printf("Setting up Gmail watch for inbox: %s", mr.Email)
 	_, err := mr.Service.Users.Watch("me", &gmail.WatchRequest{
 		LabelIds:  []string{"INBOX"},
@@ -158,13 +133,7 @@ func (mr *MailReciever) ListenForEmails(pollInterval time.Duration, messageChan 
 			return
 		}
 		fmt.Println("Received message:", pubSubMessage)
-		message, err := mr.GetMessageByHistory(pubSubMessage.HistoryId)
-		if err != nil {
-			log.Printf("Unable to get message: %v", err)
-			m.Ack()
-			return
-		}
-		messageChan <- message
+		messageAlert <- pubSubMessage
 		m.Ack()
 	})
 	if err != nil {
@@ -173,21 +142,40 @@ func (mr *MailReciever) ListenForEmails(pollInterval time.Duration, messageChan 
 	return nil
 }
 
-func (mr *MailReciever) GetMessageByHistory(historyId uint64) (*gmail.Message, error) {
-	for _, history := range mr.history {
-		if history.Id == historyId {
-			return mr.GetMessage(history.Messages[len(history.Messages)-1].Id)
-		}
-	}
-	return nil, fmt.Errorf("message not found for history ID: %d", historyId)
-}
-
 func (mr *MailReciever) GetMessage(id string) (*gmail.Message, error) {
-	msg, err := mr.Service.Users.Messages.Get("me", id).Do()
+	msg, err := mr.Service.Users.Messages.Get("me", id).Context(mr.ctx).Do()
 	if err != nil {
-		log.Printf("Unable to retrieve message: %v", err)
+		log.Printf("Unable to retrieve message: %v, email: %s", err, mr.Email)
 		return nil, err
 	}
 	return msg, nil
+}
+
+func (mr *MailReciever) GetUnreadMessages() ([]*gmail.Message, error) {
+	messages, err := mr.Service.Users.Messages.List("me").Q("is:unread").Context(mr.ctx).Do()
+	if err != nil {
+		log.Printf("Unable to retrieve messages: %v, email: %s", err, mr.Email)
+		return nil, err
+	}
+	return messages.Messages, nil
+}
+
+func (mr *MailReciever) Refresh() ([]*gmail.Message, error) {
+	var resp []*gmail.Message
+	unread, err := mr.GetUnreadMessages()
+	if err != nil {
+		return nil, err
+	}
+	for _, msg := range unread {
+		msg, err := mr.GetMessage(msg.Id)
+		mr.Service.Users.Messages.Modify("me", msg.Id, &gmail.ModifyMessageRequest{
+			RemoveLabelIds: []string{"unread"},
+		}).Context(mr.ctx).Do()
+		if err != nil {
+			continue
+		}
+		resp = append(resp, msg)
+	}
+	return resp, nil
 
 }

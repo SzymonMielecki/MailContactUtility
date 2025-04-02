@@ -39,10 +39,10 @@ func NewContactGenerator() *ContactGenerator {
 	}
 }
 
-func (c *ContactGenerator) Generate(mail string) helper.Contact {
+func (c *ContactGenerator) Generate(mail string) (helper.Contact, error) {
 	resp, err := c.model.GenerateContent(context.TODO(), genai.Text("Extract the sender data, utilizing the data from the top of the mail, aswell as the footer, from this mail: \n"+mail+"\nBe very sure of the data you extract, if data is missing, do not make it up, but return an empty string instead, if the email or phone is different between the top and the footer, return the email or phone from the footer"))
 	if err != nil {
-		log.Fatal(err)
+		return helper.Contact{}, err
 	}
 	for _, cand := range resp.Candidates {
 		if cand.Content == nil {
@@ -52,11 +52,11 @@ func (c *ContactGenerator) Generate(mail string) helper.Contact {
 			var contact helper.Contact
 			err := json.Unmarshal([]byte(fmt.Sprint(part)), &contact)
 			if err == nil {
-				return contact
+				return contact, nil
 			}
 		}
 	}
-	return helper.Contact{}
+	return helper.Contact{}, fmt.Errorf("unable to generate contact")
 }
 
 func (c *ContactGenerator) Close() error {

@@ -30,7 +30,7 @@ type Server struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	errChan       chan error
-	MailList      chan *gmail.Message
+	MessageAlert  chan interface{}
 	projectID     string
 }
 
@@ -47,7 +47,7 @@ func NewServer(dbConfig database.DatabaseConfig, projectID string) (*Server, err
 		errChan:       make(chan error, 1),
 		ctx:           ctx,
 		cancel:        cancel,
-		MailList:      make(chan *gmail.Message),
+		MessageAlert:  make(chan interface{}),
 		ContactClient: contact_generator.NewContactGenerator(),
 	}, nil
 }
@@ -55,16 +55,19 @@ func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 	sm := http.NewServeMux()
 	sm.Handle("/register", web_handler.Register(s.AuthClient))
 	sm.Handle("/auth", web_handler.Auth(s.AuthClient))
-	s.AuthClient.StartAuth(authConfig)
-	s.MailClient = mail_reciever.NewMailReciever(option.WithHTTPClient(s.AuthClient.GetClient(authConfig)), *authConfig, s.projectID, s.ctx)
-	sm.Handle("/email", web_handler.HandleEmail(s.MailClient, s.MailList))
 	s.WebServer = &http.Server{
 		Addr:        ":8080",
 		Handler:     sm,
 		BaseContext: func(_ net.Listener) context.Context { return s.ctx },
 	}
 	go s.ServeWeb()
-	go s.MailClient.ListenForEmails(10*time.Second, s.MailList, s.projectID)
+	log.Println("Starting auth")
+	s.AuthClient.StartAuth(authConfig)
+	log.Println("Starting mail client")
+	s.MailClient = mail_reciever.NewMailReciever(option.WithHTTPClient(s.AuthClient.GetClient(authConfig)), *authConfig, s.projectID, s.ctx)
+	log.Println("Starting mail client listener")
+	go s.MailClient.ListenForEmails(s.MessageAlert, s.projectID)
+	log.Println("Running")
 	s.Run()
 }
 func (s *Server) Close() {
@@ -91,23 +94,23 @@ func (s *Server) HandleEmail(mail *gmail.Message) error {
 		}
 	}
 	log.Println("Processing email from: ", sender)
-	emails, err := s.AuthClient.GetEmails()
+	emails, err := s.AuthClient.GetEmailsForScopes([]string{people.ContactsScope})
 	if err != nil {
+		log.Printf("Unable to retrieve emails: %v", err)
 		return err
 	}
 	if !slices.Contains(emails, sender) {
+		log.Printf("Email not from sender: %s, from: %s", emails, sender)
 		return fmt.Errorf("email not from sender: %s, from: %s", emails, sender)
 	}
-	authConfig := google_auth.AuthConfig{Email: sender, Scopes: []string{people.ContactsScope}}
-	user_auth := option.WithHTTPClient(s.AuthClient.GetClient(&authConfig))
+	user_auth := option.WithHTTPClient(s.AuthClient.GetClient(&google_auth.AuthConfig{
+		Email:  sender,
+		Scopes: []string{people.ContactsScope},
+	}))
 	client_ca := contact_adder.NewContactAdder(user_auth)
 
-	mailContent, err := s.MailClient.GetMessage(mail.Id)
-	if err != nil {
-		return err
-	}
 	fullMailText := ""
-	for _, part := range mailContent.Payload.Parts {
+	for _, part := range mail.Payload.Parts {
 		if part.MimeType == "text/plain" {
 			mailString, err := base64.URLEncoding.DecodeString(part.Body.Data)
 			if err != nil {
@@ -117,19 +120,36 @@ func (s *Server) HandleEmail(mail *gmail.Message) error {
 			fullMailText += string(mailString)
 		}
 	}
-	contact := s.ContactClient.Generate(fullMailText)
+	contact, err := s.ContactClient.Generate(fullMailText)
+	if err != nil {
+		log.Printf("Error generating contact: %v", err)
+		return err
+	}
+
 	log.Println(contact)
 	client_ca.AddContact(contact)
-	s.MailClient.Reply(mailContent.Id, contact)
+	s.MailClient.Reply(mail.Id, contact)
 	return nil
 }
 
 func (s *Server) Run() {
+	messages, err := s.MailClient.Refresh()
+	if err != nil {
+		log.Printf("Error refreshing messages: %v", err)
+	}
+	for _, msg := range messages {
+		s.HandleEmail(msg)
+	}
 	for {
 		select {
-		case mail := <-s.MailList:
-			if err := s.HandleEmail(mail); err != nil {
-				s.errChan <- err
+		case <-s.MessageAlert:
+			messages, err := s.MailClient.Refresh()
+			if err != nil {
+				log.Printf("Error refreshing messages: %v", err)
+				continue
+			}
+			for _, msg := range messages {
+				s.HandleEmail(msg)
 			}
 		case err := <-s.errChan:
 			log.Printf("Server error: %v\n", err)

@@ -46,10 +46,14 @@ func Register(a *google_auth.Auth) http.HandlerFunc {
 			MessageScreen("Email already registered", "The email address you provided is already registered.").Render(r.Context(), w)
 			return
 		}
-		url := a.GetUrl(google_auth.AuthConfig{Email: email, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}})
+		url, err := a.GetUrl(google_auth.AuthConfig{Email: email, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}})
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			MessageScreen("Error", fmt.Sprintf("Error: %v", err)).Render(r.Context(), w)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
-		MessageScreen("Redirecting to authorization", fmt.Sprintf("Redirecting to authorization: %s", url)).Render(r.Context(), w)
-		http.Redirect(w, r, url, http.StatusSeeOther)
+		RedirectScreen(url).Render(r.Context(), w)
 	}
 }
 func Auth(a *google_auth.Auth) http.HandlerFunc {
@@ -66,9 +70,10 @@ func Auth(a *google_auth.Auth) http.HandlerFunc {
 			MessageScreen("Missing code parameter", "Missing code parameter").Render(r.Context(), w)
 			return
 		}
-
-		err := a.HandleAuthCode(&google_auth.AuthConfig{Email: state, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}}, code)
-		if err != nil {
+		if err := a.HandleAuthCode(&google_auth.AuthConfig{
+			Email:  state,
+			Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope},
+		}, code); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			MessageScreen("Error", fmt.Sprintf("Error: %v", err)).Render(r.Context(), w)
 			return
