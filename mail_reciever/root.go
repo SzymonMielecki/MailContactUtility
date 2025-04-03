@@ -8,10 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
-	"cloud.google.com/go/auth"
 	"cloud.google.com/go/pubsub"
 	"google.golang.org/api/gmail/v1"
 	"google.golang.org/api/option"
@@ -63,24 +61,12 @@ func (mr *MailReciever) Reply(id string, contact helper.Contact, originalMsg *gm
 }
 
 func NewMailReciever(httpOption option.ClientOption, authConfig google_auth.AuthConfig, ctx context.Context, projectId string) (*MailReciever, error) {
-	b, err := os.ReadFile(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))
-	if err != nil {
-		log.Fatalf("Unable to read client secret file: %v", err)
-	}
-	srv, err := gmail.NewService(ctx, option.WithAuthCredentials(auth.NewCredentials(
-		&auth.CredentialsOptions{
-			JSON: b,
-		},
-	)))
+	srv, err := gmail.NewService(ctx, httpOption)
 	if err != nil {
 		log.Printf("Unable to create people Client %v", err)
 		return nil, err
 	}
-	pubSubClient, err := pubsub.NewClient(ctx, projectId, option.WithAuthCredentials(auth.NewCredentials(
-		&auth.CredentialsOptions{
-			JSON: b,
-		},
-	)))
+	pubSubClient, err := pubsub.NewClient(ctx, projectId)
 	if err != nil {
 		log.Printf("Unable to create pubsub client %v", err)
 		return nil, err
@@ -109,8 +95,7 @@ func (mr *MailReciever) GetUnreadMessages() ([]*gmail.Message, error) {
 func (mr *MailReciever) ListenForEmails(target chan<- *gmail.Message) error {
 	messageAlert := make(chan PubSubMessage)
 
-	topic := mr.PubSubClient.Topic("gmail-watcher")
-	exists, err := topic.Exists(mr.ctx)
+	exists, err := mr.PubSubClient.Topic("gmail-watcher").Exists(mr.ctx)
 	if err != nil {
 		log.Fatalf("Unable to check if topic exists: %v", err)
 	}
