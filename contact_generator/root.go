@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/google/generative-ai-go/genai"
 	"golang.org/x/net/context"
@@ -18,8 +17,8 @@ type ContactGenerator struct {
 	model  *genai.GenerativeModel
 }
 
-func NewContactGenerator(ctx context.Context) *ContactGenerator {
-	client, err := genai.NewClient(ctx, option.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
+func NewContactGenerator(ctx context.Context, apiKey string) *ContactGenerator {
+	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
 	if err != nil {
 		log.Fatal(err)
 	}

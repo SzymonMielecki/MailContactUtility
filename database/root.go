@@ -6,6 +6,7 @@ import (
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type DatabaseConfig struct {
@@ -30,7 +31,9 @@ type Token struct {
 func NewDatabase(ctx context.Context, config DatabaseConfig) (*Database, error) {
 	db, err := gorm.Open(postgres.Open(
 		"host="+config.Host+" user="+config.User+" password="+config.Password+" dbname="+config.Database+" port=5432 sslmode=disable",
-	), &gorm.Config{})
+	), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
 	if err != nil {
 		return nil, err
 	}

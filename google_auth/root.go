@@ -16,7 +16,8 @@ import (
 )
 
 type Auth struct {
-	db *database.Database
+	db  *database.Database
+	ctx context.Context
 }
 
 type AuthConfig struct {
@@ -35,7 +36,8 @@ func NewAuth(ctx context.Context, config database.DatabaseConfig) (*Auth, error)
 		return nil, err
 	}
 	return &Auth{
-		db: db,
+		db:  db,
+		ctx: ctx,
 	}, nil
 }
 
@@ -91,7 +93,7 @@ func (a *Auth) StartAuth(authConfig *AuthConfig) {
 	}
 }
 
-func (a *Auth) GetClient(authConfig *AuthConfig) *http.Client {
+func (a *Auth) GetHTTPClient(authConfig *AuthConfig) *http.Client {
 	scopes := authConfig.Scopes
 	b, err := os.ReadFile("credentials.json")
 	if err != nil {

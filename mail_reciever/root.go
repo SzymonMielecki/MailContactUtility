@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
+	"cloud.google.com/go/auth"
 	"cloud.google.com/go/pubsub"
 	"google.golang.org/api/gmail/v1"
 	"google.golang.org/api/option"
@@ -19,6 +21,7 @@ type MailReciever struct {
 	*gmail.Service
 	Email        string
 	PubSubClient *pubsub.Client
+	projectId    string
 	ctx          context.Context
 }
 
@@ -59,16 +62,30 @@ func (mr *MailReciever) Reply(id string, contact helper.Contact, originalMsg *gm
 	return nil
 }
 
-func NewMailReciever(clientOption option.ClientOption, authConfig google_auth.AuthConfig, ctx context.Context) *MailReciever {
-	srv, err := gmail.NewService(ctx, clientOption)
+func NewMailReciever(httpOption option.ClientOption, authConfig google_auth.AuthConfig, ctx context.Context, projectId string) (*MailReciever, error) {
+	b, err := os.ReadFile(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+	if err != nil {
+		log.Fatalf("Unable to read client secret file: %v", err)
+	}
+	srv, err := gmail.NewService(ctx, option.WithAuthCredentials(auth.NewCredentials(
+		&auth.CredentialsOptions{
+			JSON: b,
+		},
+	)))
 	if err != nil {
 		log.Printf("Unable to create people Client %v", err)
+		return nil, err
 	}
-	pubSubClient, err := pubsub.NewClient(ctx, "core-shard-423110-m7")
+	pubSubClient, err := pubsub.NewClient(ctx, projectId, option.WithAuthCredentials(auth.NewCredentials(
+		&auth.CredentialsOptions{
+			JSON: b,
+		},
+	)))
 	if err != nil {
 		log.Printf("Unable to create pubsub client %v", err)
+		return nil, err
 	}
-	return &MailReciever{Service: srv, Email: authConfig.Email, PubSubClient: pubSubClient, ctx: ctx}
+	return &MailReciever{Service: srv, Email: authConfig.Email, PubSubClient: pubSubClient, ctx: ctx, projectId: projectId}, nil
 }
 
 func (mr *MailReciever) GetMessages() ([]*gmail.Message, error) {
@@ -92,7 +109,8 @@ func (mr *MailReciever) GetUnreadMessages() ([]*gmail.Message, error) {
 func (mr *MailReciever) ListenForEmails(target chan<- *gmail.Message) error {
 	messageAlert := make(chan PubSubMessage)
 
-	exists, err := mr.PubSubClient.Topic("gmail-watcher").Exists(mr.ctx)
+	topic := mr.PubSubClient.Topic("gmail-watcher")
+	exists, err := topic.Exists(mr.ctx)
 	if err != nil {
 		log.Fatalf("Unable to check if topic exists: %v", err)
 	}
@@ -105,7 +123,7 @@ func (mr *MailReciever) ListenForEmails(target chan<- *gmail.Message) error {
 	}
 	_, err = mr.Service.Users.Watch("me", &gmail.WatchRequest{
 		LabelIds:  []string{"INBOX"},
-		TopicName: "projects/core-shard-423110-m7/topics/gmail-watcher",
+		TopicName: fmt.Sprintf("projects/%s/topics/gmail-watcher", mr.projectId),
 	}).Context(mr.ctx).Do()
 	if err != nil {
 		return fmt.Errorf("unable to watch for emails: %v", err)

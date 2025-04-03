@@ -31,9 +31,25 @@ type Server struct {
 	cancel        context.CancelFunc
 	errChan       chan error
 	mailList      chan *gmail.Message
+	projectId     string
 }
 
-func NewServer(dbConfig database.DatabaseConfig) (*Server, error) {
+type ServerConfig struct {
+	DatabaseName     string
+	DatabaseUser     string
+	DatabasePassword string
+	DatabaseHost     string
+	GeminiApiKey     string
+	ProjectId        string
+}
+
+func NewServer(config ServerConfig) (*Server, error) {
+	dbConfig := database.DatabaseConfig{
+		Host:     config.DatabaseHost,
+		Password: config.DatabasePassword,
+		User:     config.DatabaseUser,
+		Database: config.DatabaseName,
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	auth, err := google_auth.NewAuth(ctx, dbConfig)
 	if err != nil {
@@ -46,7 +62,8 @@ func NewServer(dbConfig database.DatabaseConfig) (*Server, error) {
 		ctx:           ctx,
 		cancel:        cancel,
 		mailList:      make(chan *gmail.Message),
-		ContactClient: contact_generator.NewContactGenerator(ctx),
+		ContactClient: contact_generator.NewContactGenerator(ctx, config.GeminiApiKey),
+		projectId:     config.ProjectId,
 	}, nil
 }
 func (s *Server) Start(authConfig *google_auth.AuthConfig) {
@@ -61,7 +78,13 @@ func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 	log.Println("Starting server...")
 	go s.ServeWeb()
 	s.AuthClient.StartAuth(authConfig)
-	s.MailClient = mail_reciever.NewMailReciever(option.WithHTTPClient(s.AuthClient.GetClient(authConfig)), *authConfig, s.ctx)
+	mailClient, err := mail_reciever.NewMailReciever(option.WithHTTPClient(s.AuthClient.GetHTTPClient(authConfig)), *authConfig, s.ctx, s.projectId)
+	if err != nil {
+		log.Printf("Unable to create mail client: %v", err)
+		s.cancel()
+		return
+	}
+	s.MailClient = mailClient
 	log.Println("Starting listener...")
 	go s.ListenForEmails()
 	log.Println("Authorization completed")
@@ -107,7 +130,7 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 		return
 	}
 	authConfig := google_auth.AuthConfig{Email: sender, Scopes: []string{people.ContactsScope}}
-	user_auth := option.WithHTTPClient(s.AuthClient.GetClient(&authConfig))
+	user_auth := option.WithHTTPClient(s.AuthClient.GetHTTPClient(&authConfig))
 	client_ca := contact_adder.NewContactAdder(user_auth)
 
 	mailContent, err := s.MailClient.GetMessage(mail.Id)
