@@ -27,8 +27,9 @@ func main() {
 		log.Fatal(err)
 	}
 	s.Start(&google_auth.AuthConfig{
-		Email:  "contacterutil@gmail.com",
+		Email:  os.Getenv("EMAIL"),
 		Scopes: []string{gmail.GmailReadonlyScope, gmail.GmailModifyScope},
+		Path:   os.Getenv("CREDENTIALS_PATH"),
 	})
 	defer s.Close()
 }

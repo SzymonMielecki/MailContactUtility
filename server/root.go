@@ -23,15 +23,16 @@ import (
 )
 
 type Server struct {
-	AuthClient    *google_auth.Auth
-	MailClient    *mail_reciever.MailReciever
-	ContactClient *contact_generator.ContactGenerator
-	WebServer     *http.Server
-	ctx           context.Context
-	cancel        context.CancelFunc
-	errChan       chan error
-	mailList      chan *gmail.Message
-	projectId     string
+	AuthClient      *google_auth.Auth
+	MailClient      *mail_reciever.MailReciever
+	ContactClient   *contact_generator.ContactGenerator
+	WebServer       *http.Server
+	ctx             context.Context
+	cancel          context.CancelFunc
+	errChan         chan error
+	mailList        chan *gmail.Message
+	projectId       string
+	credentailsPath string
 }
 
 type ServerConfig struct {
@@ -67,9 +68,10 @@ func NewServer(config ServerConfig) (*Server, error) {
 	}, nil
 }
 func (s *Server) Start(authConfig *google_auth.AuthConfig) {
+	s.credentailsPath = authConfig.Path
 	sm := http.NewServeMux()
-	sm.Handle("/register", web_handler.Register(s.AuthClient))
-	sm.Handle("/auth", web_handler.Auth(s.AuthClient))
+	sm.Handle("/register", web_handler.Register(s.AuthClient, s.credentailsPath))
+	sm.Handle("/auth", web_handler.Auth(s.AuthClient, s.credentailsPath))
 	s.WebServer = &http.Server{
 		Addr:        ":8080",
 		Handler:     sm,
@@ -78,7 +80,13 @@ func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 	log.Println("Starting server...")
 	go s.ServeWeb()
 	s.AuthClient.StartAuth(authConfig)
-	mailClient, err := mail_reciever.NewMailReciever(option.WithHTTPClient(s.AuthClient.GetHTTPClient(authConfig)), *authConfig, s.ctx, s.projectId)
+	client, err := s.AuthClient.GetHTTPClient(authConfig)
+	if err != nil {
+		log.Printf("Unable to create http client: %v", err)
+		s.cancel()
+		return
+	}
+	mailClient, err := mail_reciever.NewMailReciever(option.WithHTTPClient(client), *authConfig, s.ctx, s.projectId)
 	if err != nil {
 		log.Printf("Unable to create mail client: %v", err)
 		s.cancel()
@@ -129,8 +137,13 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 		log.Printf("Email not from sender: %s, from: %s", emails, sender)
 		return
 	}
-	authConfig := google_auth.AuthConfig{Email: sender, Scopes: []string{people.ContactsScope}}
-	user_auth := option.WithHTTPClient(s.AuthClient.GetHTTPClient(&authConfig))
+	authConfig := google_auth.AuthConfig{Email: sender, Scopes: []string{people.ContactsScope}, Path: s.credentailsPath}
+	client, err := s.AuthClient.GetHTTPClient(&authConfig)
+	if err != nil {
+		log.Printf("Unable to create http client: %v", err)
+		return
+	}
+	user_auth := option.WithHTTPClient(client)
 	client_ca := contact_adder.NewContactAdder(user_auth)
 
 	mailContent, err := s.MailClient.GetMessage(mail.Id)

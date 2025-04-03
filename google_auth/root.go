@@ -23,6 +23,7 @@ type Auth struct {
 type AuthConfig struct {
 	Email  string
 	Scopes []string
+	Path   string
 }
 
 type TokenWithEmail struct {
@@ -41,28 +42,28 @@ func NewAuth(ctx context.Context, config database.DatabaseConfig) (*Auth, error)
 	}, nil
 }
 
-func (a *Auth) GetUrl(authConfig AuthConfig) string {
+func (a *Auth) GetUrl(authConfig AuthConfig) (string, error) {
 	email := authConfig.Email
 	scopes := authConfig.Scopes
-	b, err := os.ReadFile("credentials.json")
+	b, err := os.ReadFile(authConfig.Path)
 	if err != nil {
-		log.Fatalf("Unable to read client secret file: %v", err)
+		return "", fmt.Errorf("unable to read client secret file: %v", err)
 	}
 
 	config, err := google.ConfigFromJSON(b, scopes...)
 	if err != nil {
-		log.Fatalf("Unable to parse client secret file to config: %v", err)
+		return "", fmt.Errorf("unable to parse client secret file to config: %v", err)
 	}
 	opts := []oauth2.AuthCodeOption{
 		oauth2.AccessTypeOffline,
 		oauth2.ApprovalForce,
 	}
-	return config.AuthCodeURL(email, opts...)
+	return config.AuthCodeURL(email, opts...), nil
 }
 
 func (a *Auth) HandleAuthCode(authConfig *AuthConfig, code string) error {
 	scopes := authConfig.Scopes
-	b, err := os.ReadFile("credentials.json")
+	b, err := os.ReadFile(authConfig.Path)
 	if err != nil {
 		return fmt.Errorf("unable to read client secret file: %v", err)
 	}
@@ -82,7 +83,10 @@ func (a *Auth) HandleAuthCode(authConfig *AuthConfig, code string) error {
 }
 func (a *Auth) StartAuth(authConfig *AuthConfig) {
 	if _, err := a.TokenFromDb(authConfig); err != nil {
-		url := a.GetUrl(*authConfig)
+		url, err := a.GetUrl(*authConfig)
+		if err != nil {
+			log.Fatalf("Unable to get URL: %v", err)
+		}
 		fmt.Println("Please authorize at:", url)
 		for {
 			if _, err := a.TokenFromDb(authConfig); err == nil {
@@ -93,22 +97,22 @@ func (a *Auth) StartAuth(authConfig *AuthConfig) {
 	}
 }
 
-func (a *Auth) GetHTTPClient(authConfig *AuthConfig) *http.Client {
+func (a *Auth) GetHTTPClient(authConfig *AuthConfig) (*http.Client, error) {
 	scopes := authConfig.Scopes
-	b, err := os.ReadFile("credentials.json")
+	b, err := os.ReadFile(authConfig.Path)
 	if err != nil {
-		log.Fatalf("Unable to read client secret file: %v", err)
+		return nil, fmt.Errorf("unable to read client secret file: %v", err)
 	}
 
 	config, err := google.ConfigFromJSON(b, scopes...)
 	if err != nil {
-		log.Fatalf("Unable to parse client secret file to config: %v", err)
+		return nil, fmt.Errorf("unable to parse client secret file to config: %v", err)
 	}
 	tok, err := a.TokenFromDb(authConfig)
 	if err != nil {
-		log.Fatalf("Unable to retrieve token from file: %v", err)
+		return nil, fmt.Errorf("unable to retrieve token from file: %v", err)
 	}
-	return config.Client(context.Background(), tok)
+	return config.Client(context.Background(), tok), nil
 }
 
 func (a *Auth) TokenFromDb(authConfig *AuthConfig) (*oauth2.Token, error) {

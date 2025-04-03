@@ -25,7 +25,8 @@ services:
     ports:
       - 8080:8080
     volumes:
-      - ./credentials.json:/credentials.json
+      - ./oauth_credentials.json:/oauth_credentials.json
+      - ./account_credentials.json:/account_credentials.json
     environment:
       - DATABASE_HOST=postgres
       - DATABASE_PASSWORD=postgres
@@ -33,7 +34,9 @@ services:
       - DATABASE_DB=tokens
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - PROJECT_ID=${PROJECT_ID}
-      - GOOGLE_APPLICATION_CREDENTIALS=/credentials.json
+      - CREDENTIALS_PATH=/oauth_credentials.json
+      - GOOGLE_APPLICATION_CREDENTIALS=/account_credentials.json
+      - EMAIL=${EMAIL}
 
 volumes:
   postgres_data:

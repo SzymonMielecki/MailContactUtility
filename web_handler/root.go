@@ -10,7 +10,7 @@ import (
 	"google.golang.org/api/people/v1"
 )
 
-func Register(a *google_auth.Auth) http.HandlerFunc {
+func Register(a *google_auth.Auth, credentialsPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			RegisterScreen().Render(r.Context(), w)
@@ -33,12 +33,17 @@ func Register(a *google_auth.Auth) http.HandlerFunc {
 			MessageScreen("Email already registered", "The email address you provided is already registered.").Render(r.Context(), w)
 			return
 		}
-		url := a.GetUrl(google_auth.AuthConfig{Email: email, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}})
+		url, err := a.GetUrl(google_auth.AuthConfig{Email: email, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}, Path: credentialsPath})
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			MessageScreen("Error", fmt.Sprintf("Error: %v", err)).Render(r.Context(), w)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		RedirectScreen(url).Render(r.Context(), w)
 	}
 }
-func Auth(a *google_auth.Auth) http.HandlerFunc {
+func Auth(a *google_auth.Auth, credentialsPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		state := r.URL.Query().Get("state")
 		if state == "" {
@@ -53,7 +58,7 @@ func Auth(a *google_auth.Auth) http.HandlerFunc {
 			return
 		}
 
-		err := a.HandleAuthCode(&google_auth.AuthConfig{Email: state, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}}, code)
+		err := a.HandleAuthCode(&google_auth.AuthConfig{Email: state, Scopes: []string{people.ContactsScope, gmail.GmailReadonlyScope, gmail.GmailModifyScope}, Path: credentialsPath}, code)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			MessageScreen("Error", fmt.Sprintf("Error: %v", err)).Render(r.Context(), w)
