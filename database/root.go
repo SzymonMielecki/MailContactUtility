@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"golang.org/x/oauth2"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -18,6 +19,15 @@ type DatabaseConfig struct {
 
 type Database struct {
 	db *gorm.DB
+}
+
+func (d *Database) UpdateToken(email string, token *oauth2.Token) error {
+	return d.db.Model(&Token{}).Where("email = ?", email).Updates(Token{
+		AccessToken:  token.AccessToken,
+		TokenType:    token.TokenType,
+		RefreshToken: token.RefreshToken,
+		Expiry:       token.Expiry,
+	}).Error
 }
 
 type Token struct {
@@ -53,10 +63,10 @@ func (d *Database) GetEmails() ([]string, error) {
 	return emails, nil
 }
 
-func (d *Database) GetToken(email string) (Token, error) {
+func (d *Database) GetToken(email string) (*Token, error) {
 	var token Token
 	if err := d.db.Model(&Token{}).Where("email = ?", email).First(&token).Error; err != nil {
-		return Token{}, err
+		return nil, err
 	}
-	return token, nil
+	return &token, nil
 }

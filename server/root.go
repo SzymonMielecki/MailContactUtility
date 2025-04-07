@@ -57,13 +57,18 @@ func NewServer(config ServerConfig) (*Server, error) {
 		cancel()
 		return nil, err
 	}
+	contactClient, err := contact_generator.NewContactGenerator(ctx, config.GeminiApiKey)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
 	return &Server{
 		AuthClient:    auth,
 		errChan:       make(chan error, 1),
 		ctx:           ctx,
 		cancel:        cancel,
 		mailList:      make(chan *gmail.Message),
-		ContactClient: contact_generator.NewContactGenerator(ctx, config.GeminiApiKey),
+		ContactClient: contactClient,
 		projectId:     config.ProjectId,
 	}, nil
 }
@@ -144,7 +149,11 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 		return
 	}
 	user_auth := option.WithHTTPClient(client)
-	client_ca := contact_adder.NewContactAdder(user_auth)
+	client_ca, err := contact_adder.NewContactAdder(user_auth)
+	if err != nil {
+		log.Printf("Unable to create contact client: %v", err)
+		return
+	}
 
 	mailContent, err := s.MailClient.GetMessage(mail.Id)
 	if err != nil {
@@ -162,9 +171,16 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 			fullMailText += string(mailString)
 		}
 	}
-	contact := s.ContactClient.Generate(fullMailText)
-	log.Println(contact)
-	client_ca.AddContact(contact)
+	contact, err := s.ContactClient.Generate(fullMailText)
+	if err != nil {
+		log.Printf("Error generating contact: %v", err)
+		return
+	}
+	_, err = client_ca.AddContact(contact)
+	if err != nil {
+		log.Printf("Error adding contact: %v", err)
+		return
+	}
 	err = s.MailClient.Reply(mailContent.Id, contact, mailContent, sender)
 	if err != nil {
 		log.Printf("Error replying to message: %v", err)

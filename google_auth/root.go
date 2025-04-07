@@ -3,12 +3,10 @@ package google_auth
 import (
 	"MailContactUtilty/database"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"slices"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -128,34 +126,19 @@ func (a *Auth) TokenFromDb(authConfig *AuthConfig) (*oauth2.Token, error) {
 	}, nil
 }
 
-func (a *Auth) SaveToken(authConfig *AuthConfig, token *oauth2.Token) {
+func (a *Auth) SaveToken(authConfig *AuthConfig, token *oauth2.Token) error {
 	email := authConfig.Email
-	var tok []*TokenWithEmail
-
-	if f, err := os.Open("tokens.json"); err == nil {
-		json.NewDecoder(f).Decode(&tok)
-		f.Close()
+	found, _ := a.db.GetToken(email)
+	if found == nil {
+		return a.db.AddToken(database.Token{
+			Email:        email,
+			AccessToken:  token.AccessToken,
+			RefreshToken: token.RefreshToken,
+			Expiry:       token.Expiry,
+			TokenType:    token.TokenType,
+		})
 	}
-
-	if slices.Contains(tok, &TokenWithEmail{Email: email}) {
-		for _, t := range tok {
-			if t.Email == email {
-				t.Token = token
-				break
-			}
-		}
-	} else {
-		tok = append(tok, &TokenWithEmail{Token: token, Email: email})
-	}
-	if err := a.db.AddToken(database.Token{
-		Email:        email,
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		Expiry:       token.Expiry,
-		TokenType:    token.TokenType,
-	}); err != nil {
-		log.Fatalf("Unable to add token to database: %v", err)
-	}
+	return a.db.UpdateToken(email, token)
 }
 
 func (a *Auth) GetEmails() ([]string, error) {

@@ -28,24 +28,19 @@ type PubSubMessage struct {
 	HistoryId uint64 `json:"historyId"`
 }
 
-func (mr *MailReciever) Reply(id string, contact helper.Contact, originalMsg *gmail.Message, sender string) error {
-	emailContent := fmt.Sprintf("Thank you for your email. I've added the following contact information:\n"+
-		"Name: %s\n"+
-		"Surname: %s\n"+
-		"Email: %s\n"+
-		"Phone: %s",
-		contact.Name,
-		contact.Surname,
-		contact.Email,
-		contact.Phone)
-
+func (mr *MailReciever) Reply(id string, contact *helper.Contact, originalMsg *gmail.Message, sender string) error {
 	rawMessage := "From: " + mr.Email + "\r\n" +
 		"To: " + sender + "\r\n" +
 		"Subject: Re: Contact Added\r\n" +
 		"References: " + originalMsg.Id + "\r\n" +
 		"In-Reply-To: " + originalMsg.Id + "\r\n" +
 		"Content-Type: text/plain; charset=UTF-8\r\n\r\n" +
-		emailContent
+		"Thank you for your email. I've added the following contact information:\n" +
+		"Name: " + contact.Name + "\n" +
+		"Surname: " + contact.Surname + "\n" +
+		"Email: " + contact.Email + "\n" +
+		"Phone:" + contact.Phone + "\n" +
+		"Organization: " + contact.Organization + "\n"
 
 	message := &gmail.Message{
 		Raw:      base64.URLEncoding.EncodeToString([]byte(rawMessage)),
@@ -142,7 +137,6 @@ func (mr *MailReciever) ListenForEmails(target chan<- *gmail.Message) error {
 				m.Ack()
 				return
 			}
-			log.Println("Received message:", pubSubMessage)
 			messageAlert <- pubSubMessage
 			m.Ack()
 		})
