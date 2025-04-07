@@ -1,10 +1,10 @@
 package main
 
 import (
-	"MailContactUtilty/database"
 	"MailContactUtilty/google_auth"
 	"MailContactUtilty/server"
 	"log"
+	"os"
 
 	"github.com/joho/godotenv"
 	"google.golang.org/api/gmail/v1"
@@ -15,18 +15,21 @@ func main() {
 		log.Fatal(err)
 	}
 
-	s, err := server.NewServer(database.DatabaseConfig{
-		Host:     "localhost",
-		Password: "postgres",
-		User:     "postgres",
-		Database: "tokens",
+	s, err := server.NewServer(server.ServerConfig{
+		DatabaseName:     os.Getenv("DATABASE_DB"),
+		DatabaseUser:     os.Getenv("DATABASE_USER"),
+		DatabasePassword: os.Getenv("DATABASE_PASSWORD"),
+		DatabaseHost:     os.Getenv("DATABASE_HOST"),
+		GeminiApiKey:     os.Getenv("GEMINI_API_KEY"),
+		ProjectId:        os.Getenv("PROJECT_ID"),
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 	s.Start(&google_auth.AuthConfig{
-		Email:  "contacterutil@gmail.com",
+		Email:  os.Getenv("EMAIL"),
 		Scopes: []string{gmail.GmailReadonlyScope, gmail.GmailModifyScope},
+		Path:   os.Getenv("CREDENTIALS_PATH"),
 	})
 	defer s.Close()
 }

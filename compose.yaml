@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=tokens
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-d", "postgres", "-U", "postgres" ]
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 1s
+  server:
+    image: simonmielecki/mail-contact-utility
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: always
+    ports:
+      - 8080:8080
+    volumes:
+      - ./oauth_credentials.json:/oauth_credentials.json
+      - ./account_credentials.json:/account_credentials.json
+    environment:
+      - DATABASE_HOST=postgres
+      - DATABASE_PASSWORD=postgres
+      - DATABASE_USER=postgres
+      - DATABASE_DB=tokens
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - PROJECT_ID=${PROJECT_ID}
+      - CREDENTIALS_PATH=/oauth_credentials.json
+      - GOOGLE_APPLICATION_CREDENTIALS=/account_credentials.json
+      - EMAIL=${EMAIL}
+
+volumes:
+  postgres_data:

@@ -2,7 +2,6 @@ package contact_adder
 
 import (
 	"MailContactUtilty/helper"
-	"log"
 
 	"golang.org/x/net/context"
 	"google.golang.org/api/option"
@@ -13,17 +12,18 @@ type ContactAdder struct {
 	*people.Service
 }
 
-func NewContactAdder(clientOption option.ClientOption) *ContactAdder {
+func NewContactAdder(clientOption option.ClientOption) (*ContactAdder, error) {
 	srv, err := people.NewService(context.Background(), clientOption)
 	if err != nil {
-		log.Fatalf("Unable to create people Client %v", err)
+		return nil, err
+
 	}
 	return &ContactAdder{
 		Service: srv,
-	}
+	}, nil
 }
 
-func (ca *ContactAdder) AddContact(contact helper.Contact) (helper.Contact, error) {
+func (ca *ContactAdder) AddContact(contact *helper.Contact) (*helper.Contact, error) {
 	_, err := ca.People.CreateContact(&people.Person{
 		Names: []*people.Name{
 			{
@@ -48,8 +48,7 @@ func (ca *ContactAdder) AddContact(contact helper.Contact) (helper.Contact, erro
 		},
 	}).Do()
 	if err != nil {
-		log.Fatalf("Unable to create contact: %v", err)
-		return helper.Contact{}, err
+		return nil, err
 	}
 	return contact, nil
 }

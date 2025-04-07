@@ -1,5 +1,4 @@
 .env
-credentials.json
-tokens.json
+*.json
 DS_Store
 cloud-sql-proxy

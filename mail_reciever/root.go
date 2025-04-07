@@ -19,6 +19,7 @@ type MailReciever struct {
 	*gmail.Service
 	Email        string
 	PubSubClient *pubsub.Client
+	projectId    string
 	ctx          context.Context
 }
 
@@ -27,24 +28,19 @@ type PubSubMessage struct {
 	HistoryId uint64 `json:"historyId"`
 }
 
-func (mr *MailReciever) Reply(id string, contact helper.Contact, originalMsg *gmail.Message, sender string) error {
-	emailContent := fmt.Sprintf("Thank you for your email. I've added the following contact information:\n"+
-		"Name: %s\n"+
-		"Surname: %s\n"+
-		"Email: %s\n"+
-		"Phone: %s",
-		contact.Name,
-		contact.Surname,
-		contact.Email,
-		contact.Phone)
-
+func (mr *MailReciever) Reply(id string, contact *helper.Contact, originalMsg *gmail.Message, sender string) error {
 	rawMessage := "From: " + mr.Email + "\r\n" +
 		"To: " + sender + "\r\n" +
 		"Subject: Re: Contact Added\r\n" +
 		"References: " + originalMsg.Id + "\r\n" +
 		"In-Reply-To: " + originalMsg.Id + "\r\n" +
 		"Content-Type: text/plain; charset=UTF-8\r\n\r\n" +
-		emailContent
+		"Thank you for your email. I've added the following contact information:\n" +
+		"Name: " + contact.Name + "\n" +
+		"Surname: " + contact.Surname + "\n" +
+		"Email: " + contact.Email + "\n" +
+		"Phone:" + contact.Phone + "\n" +
+		"Organization: " + contact.Organization + "\n"
 
 	message := &gmail.Message{
 		Raw:      base64.URLEncoding.EncodeToString([]byte(rawMessage)),
@@ -59,16 +55,18 @@ func (mr *MailReciever) Reply(id string, contact helper.Contact, originalMsg *gm
 	return nil
 }
 
-func NewMailReciever(clientOption option.ClientOption, authConfig google_auth.AuthConfig, ctx context.Context) *MailReciever {
-	srv, err := gmail.NewService(ctx, clientOption)
+func NewMailReciever(httpOption option.ClientOption, authConfig google_auth.AuthConfig, ctx context.Context, projectId string) (*MailReciever, error) {
+	srv, err := gmail.NewService(ctx, httpOption)
 	if err != nil {
 		log.Printf("Unable to create people Client %v", err)
+		return nil, err
 	}
-	pubSubClient, err := pubsub.NewClient(ctx, "core-shard-423110-m7")
+	pubSubClient, err := pubsub.NewClient(ctx, projectId)
 	if err != nil {
 		log.Printf("Unable to create pubsub client %v", err)
+		return nil, err
 	}
-	return &MailReciever{Service: srv, Email: authConfig.Email, PubSubClient: pubSubClient, ctx: ctx}
+	return &MailReciever{Service: srv, Email: authConfig.Email, PubSubClient: pubSubClient, ctx: ctx, projectId: projectId}, nil
 }
 
 func (mr *MailReciever) GetMessages() ([]*gmail.Message, error) {
@@ -105,7 +103,7 @@ func (mr *MailReciever) ListenForEmails(target chan<- *gmail.Message) error {
 	}
 	_, err = mr.Service.Users.Watch("me", &gmail.WatchRequest{
 		LabelIds:  []string{"INBOX"},
-		TopicName: "projects/core-shard-423110-m7/topics/gmail-watcher",
+		TopicName: fmt.Sprintf("projects/%s/topics/gmail-watcher", mr.projectId),
 	}).Context(mr.ctx).Do()
 	if err != nil {
 		return fmt.Errorf("unable to watch for emails: %v", err)
@@ -139,7 +137,6 @@ func (mr *MailReciever) ListenForEmails(target chan<- *gmail.Message) error {
 				m.Ack()
 				return
 			}
-			log.Println("Received message:", pubSubMessage)
 			messageAlert <- pubSubMessage
 			m.Ack()
 		})
