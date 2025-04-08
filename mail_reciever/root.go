@@ -20,7 +20,6 @@ type MailReciever struct {
 	Email        string
 	PubSubClient *pubsub.Client
 	projectId    string
-	ctx          context.Context
 }
 
 type PubSubMessage struct {
@@ -28,7 +27,7 @@ type PubSubMessage struct {
 	HistoryId uint64 `json:"historyId"`
 }
 
-func (mr *MailReciever) Reply(id string, contact *helper.Contact, originalMsg *gmail.Message, sender string) error {
+func (mr *MailReciever) Reply(ctx context.Context, id string, contact *helper.Contact, originalMsg *gmail.Message, sender string) error {
 	rawMessage := "From: " + mr.Email + "\r\n" +
 		"To: " + sender + "\r\n" +
 		"Subject: Re: Contact Added\r\n" +
@@ -47,7 +46,7 @@ func (mr *MailReciever) Reply(id string, contact *helper.Contact, originalMsg *g
 		ThreadId: originalMsg.ThreadId,
 	}
 
-	_, err := mr.Service.Users.Messages.Send("me", message).Context(mr.ctx).Do()
+	_, err := mr.Service.Users.Messages.Send("me", message).Context(ctx).Do()
 	if err != nil {
 		return fmt.Errorf("unable to send reply: %v", err)
 	}
@@ -55,7 +54,7 @@ func (mr *MailReciever) Reply(id string, contact *helper.Contact, originalMsg *g
 	return nil
 }
 
-func NewMailReciever(httpOption option.ClientOption, authConfig google_auth.AuthConfig, ctx context.Context, projectId string) (*MailReciever, error) {
+func NewMailReciever(ctx context.Context, httpOption option.ClientOption, authConfig google_auth.AuthConfig, projectId string) (*MailReciever, error) {
 	srv, err := gmail.NewService(ctx, httpOption)
 	if err != nil {
 		log.Printf("Unable to create people Client %v", err)
@@ -66,11 +65,11 @@ func NewMailReciever(httpOption option.ClientOption, authConfig google_auth.Auth
 		log.Printf("Unable to create pubsub client %v", err)
 		return nil, err
 	}
-	return &MailReciever{Service: srv, Email: authConfig.Email, PubSubClient: pubSubClient, ctx: ctx, projectId: projectId}, nil
+	return &MailReciever{Service: srv, Email: authConfig.Email, PubSubClient: pubSubClient, projectId: projectId}, nil
 }
 
-func (mr *MailReciever) GetMessages() ([]*gmail.Message, error) {
-	messages, err := mr.Service.Users.Messages.List("me").Context(mr.ctx).Do()
+func (mr *MailReciever) GetMessages(ctx context.Context) ([]*gmail.Message, error) {
+	messages, err := mr.Service.Users.Messages.List("me").Context(ctx).Do()
 	if err != nil {
 		log.Printf("Unable to retrieve messages: %v, email: %s", err, mr.Email)
 		return nil, err
@@ -78,8 +77,8 @@ func (mr *MailReciever) GetMessages() ([]*gmail.Message, error) {
 	return messages.Messages, nil
 }
 
-func (mr *MailReciever) GetUnreadMessages() ([]*gmail.Message, error) {
-	messages, err := mr.Service.Users.Messages.List("me").Q("is:unread").Context(mr.ctx).Do()
+func (mr *MailReciever) GetUnreadMessages(ctx context.Context) ([]*gmail.Message, error) {
+	messages, err := mr.Service.Users.Messages.List("me").Q("is:unread").Context(ctx).Do()
 	if err != nil {
 		log.Printf("Unable to retrieve messages: %v, email: %s", err, mr.Email)
 		return nil, err
@@ -87,36 +86,38 @@ func (mr *MailReciever) GetUnreadMessages() ([]*gmail.Message, error) {
 	return messages.Messages, nil
 }
 
-func (mr *MailReciever) ListenForEmails(target chan<- *gmail.Message) error {
+func (mr *MailReciever) ListenForEmails(ctx context.Context, target chan<- *gmail.Message) error {
 	messageAlert := make(chan PubSubMessage)
 
-	exists, err := mr.PubSubClient.Topic("gmail-watcher").Exists(mr.ctx)
+	exists, err := mr.PubSubClient.Topic("gmail-watcher").Exists(ctx)
 	if err != nil {
-		log.Fatalf("Unable to check if topic exists: %v", err)
+		return fmt.Errorf("unable to check if topic exists: %v", err)
 	}
 
 	if !exists {
-		_, err = mr.PubSubClient.CreateTopic(mr.ctx, "gmail-watcher")
+		_, err = mr.PubSubClient.CreateTopic(ctx, "gmail-watcher")
 		if err != nil {
-			log.Fatalf("Unable to create topic: %v", err)
+			return fmt.Errorf("unable to create topic: %v", err)
 		}
 	}
+
 	_, err = mr.Service.Users.Watch("me", &gmail.WatchRequest{
 		LabelIds:  []string{"INBOX"},
 		TopicName: fmt.Sprintf("projects/%s/topics/gmail-watcher", mr.projectId),
-	}).Context(mr.ctx).Do()
+	}).Context(ctx).Do()
 	if err != nil {
 		return fmt.Errorf("unable to watch for emails: %v", err)
 	}
+
 	sub := mr.PubSubClient.Subscription("gmail-watcher-sub")
-	exists, err = sub.Exists(mr.ctx)
+	exists, err = sub.Exists(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check subscription existence: %v", err)
 	}
 
 	if !exists {
 		log.Printf("Creating new subscription: %s", "gmail-watcher-sub")
-		sub, err = mr.PubSubClient.CreateSubscription(mr.ctx, "gmail-watcher-sub", pubsub.SubscriptionConfig{
+		sub, err = mr.PubSubClient.CreateSubscription(ctx, "gmail-watcher-sub", pubsub.SubscriptionConfig{
 			Topic:            mr.PubSubClient.Topic("gmail-watcher"),
 			AckDeadline:      10 * time.Second,
 			ExpirationPolicy: 24 * time.Hour,
@@ -128,9 +129,10 @@ func (mr *MailReciever) ListenForEmails(target chan<- *gmail.Message) error {
 	} else {
 		log.Printf("Using existing subscription: %s", "gmail-watcher-sub")
 	}
+
 	log.Printf("Starting to receive messages...")
 	go func() {
-		err = sub.Receive(mr.ctx, func(ctx context.Context, m *pubsub.Message) {
+		err = sub.Receive(ctx, func(msgCtx context.Context, m *pubsub.Message) {
 			var pubSubMessage PubSubMessage
 			if err := json.Unmarshal(m.Data, &pubSubMessage); err != nil {
 				log.Printf("Unable to unmarshal message: %v", err)
@@ -145,18 +147,18 @@ func (mr *MailReciever) ListenForEmails(target chan<- *gmail.Message) error {
 	for {
 		log.Println("Checking for new emails...")
 		select {
-		case <-mr.ctx.Done():
-			return mr.ctx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-messageAlert:
 			log.Println("Checking for new emails...")
-			newMessages, err := mr.GetUnreadMessages()
+			newMessages, err := mr.GetUnreadMessages(ctx)
 			if err != nil {
 				log.Printf("Error fetching messages: %v", err)
 				continue
 			}
 
 			for _, msg := range newMessages {
-				fullMsg, err := mr.GetMessage(msg.Id)
+				fullMsg, err := mr.GetMessage(ctx, msg.Id)
 				if err != nil {
 					log.Printf("Error fetching message details: %v", err)
 					continue
@@ -164,16 +166,16 @@ func (mr *MailReciever) ListenForEmails(target chan<- *gmail.Message) error {
 
 				log.Printf("New email received - Subject: %s, From: %s", getHeader(fullMsg.Payload.Headers, "Subject"), getHeader(fullMsg.Payload.Headers, "From"))
 				target <- fullMsg
-				mr.MarkAsRead(msg.Id)
+				mr.MarkAsRead(ctx, msg.Id)
 			}
 		}
 	}
 }
 
-func (mr *MailReciever) MarkAsRead(id string) error {
+func (mr *MailReciever) MarkAsRead(ctx context.Context, id string) error {
 	_, err := mr.Service.Users.Messages.Modify("me", id, &gmail.ModifyMessageRequest{
 		RemoveLabelIds: []string{"UNREAD"},
-	}).Do()
+	}).Context(ctx).Do()
 	if err != nil {
 		log.Printf("Unable to mark message as read: %v", err)
 		return err
@@ -190,21 +192,20 @@ func getHeader(headers []*gmail.MessagePartHeader, name string) string {
 	return ""
 }
 
-func (mr *MailReciever) GetMessage(id string) (*gmail.Message, error) {
+func (mr *MailReciever) GetMessage(ctx context.Context, id string) (*gmail.Message, error) {
 	userId := "me"
-	msg, err := mr.Service.Users.Messages.Get(userId, id).Do()
+	msg, err := mr.Service.Users.Messages.Get(userId, id).Context(ctx).Do()
 	if err != nil {
 		log.Printf("Unable to retrieve message: %v", err)
 		return nil, err
 	}
 	return msg, nil
-
 }
 
-func (mr *MailReciever) GetEmail() (string, error) {
-	profile, err := mr.Service.Users.GetProfile("me").Do()
+func (mr *MailReciever) GetEmail(ctx context.Context) (string, error) {
+	profile, err := mr.Service.Users.GetProfile("me").Context(ctx).Do()
 	if err != nil {
-		log.Fatalf("Unable to retrieve user profile: %v", err)
+		log.Printf("Unable to retrieve user profile: %v", err)
 		return "", err
 	}
 	return profile.EmailAddress, nil

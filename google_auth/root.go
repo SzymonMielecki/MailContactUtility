@@ -14,8 +14,7 @@ import (
 )
 
 type Auth struct {
-	db  *database.Database
-	ctx context.Context
+	db *database.Database
 }
 
 type AuthConfig struct {
@@ -35,20 +34,17 @@ func NewAuth(ctx context.Context, config database.DatabaseConfig) (*Auth, error)
 		return nil, err
 	}
 	return &Auth{
-		db:  db,
-		ctx: ctx,
+		db: db,
 	}, nil
 }
 
-func (a *Auth) GetUrl(authConfig AuthConfig) (string, error) {
-	email := authConfig.Email
-	scopes := authConfig.Scopes
+func (a *Auth) GetUrl(ctx context.Context, authConfig AuthConfig) (string, error) {
 	b, err := os.ReadFile(authConfig.Path)
 	if err != nil {
 		return "", fmt.Errorf("unable to read client secret file: %v", err)
 	}
 
-	config, err := google.ConfigFromJSON(b, scopes...)
+	config, err := google.ConfigFromJSON(b, authConfig.Scopes...)
 	if err != nil {
 		return "", fmt.Errorf("unable to parse client secret file to config: %v", err)
 	}
@@ -56,38 +52,37 @@ func (a *Auth) GetUrl(authConfig AuthConfig) (string, error) {
 		oauth2.AccessTypeOffline,
 		oauth2.ApprovalForce,
 	}
-	return config.AuthCodeURL(email, opts...), nil
+	return config.AuthCodeURL(authConfig.Email, opts...), nil
 }
 
-func (a *Auth) HandleAuthCode(authConfig *AuthConfig, code string) error {
-	scopes := authConfig.Scopes
+func (a *Auth) HandleAuthCode(ctx context.Context, authConfig *AuthConfig, code string) error {
 	b, err := os.ReadFile(authConfig.Path)
 	if err != nil {
 		return fmt.Errorf("unable to read client secret file: %v", err)
 	}
 
-	config, err := google.ConfigFromJSON(b, scopes...)
+	config, err := google.ConfigFromJSON(b, authConfig.Scopes...)
 	if err != nil {
 		return fmt.Errorf("unable to parse client secret file to config: %v", err)
 	}
 
-	tok, err := config.Exchange(context.Background(), code)
+	tok, err := config.Exchange(ctx, code)
 	if err != nil {
 		return fmt.Errorf("unable to retrieve token from web: %v", err)
 	}
 
-	a.SaveToken(authConfig, tok)
-	return nil
+	return a.SaveToken(ctx, authConfig, tok)
 }
-func (a *Auth) StartAuth(authConfig *AuthConfig) {
-	if _, err := a.TokenFromDb(authConfig); err != nil {
-		url, err := a.GetUrl(*authConfig)
+
+func (a *Auth) StartAuth(ctx context.Context, authConfig *AuthConfig) {
+	if _, err := a.TokenFromDb(ctx, authConfig); err != nil {
+		url, err := a.GetUrl(ctx, *authConfig)
 		if err != nil {
 			log.Fatalf("Unable to get URL: %v", err)
 		}
 		fmt.Println("Please authorize at:", url)
 		for {
-			if _, err := a.TokenFromDb(authConfig); err == nil {
+			if _, err := a.TokenFromDb(ctx, authConfig); err == nil {
 				break
 			}
 			time.Sleep(1 * time.Second)
@@ -95,26 +90,25 @@ func (a *Auth) StartAuth(authConfig *AuthConfig) {
 	}
 }
 
-func (a *Auth) GetHTTPClient(authConfig *AuthConfig) (*http.Client, error) {
-	scopes := authConfig.Scopes
+func (a *Auth) GetHTTPClient(ctx context.Context, authConfig *AuthConfig) (*http.Client, error) {
 	b, err := os.ReadFile(authConfig.Path)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read client secret file: %v", err)
 	}
 
-	config, err := google.ConfigFromJSON(b, scopes...)
+	config, err := google.ConfigFromJSON(b, authConfig.Scopes...)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse client secret file to config: %v", err)
 	}
-	tok, err := a.TokenFromDb(authConfig)
+	tok, err := a.TokenFromDb(ctx, authConfig)
 	if err != nil {
 		return nil, fmt.Errorf("unable to retrieve token from file: %v", err)
 	}
-	return config.Client(context.Background(), tok), nil
+	return config.Client(ctx, tok), nil
 }
 
-func (a *Auth) TokenFromDb(authConfig *AuthConfig) (*oauth2.Token, error) {
-	token, err := a.db.GetToken(authConfig.Email)
+func (a *Auth) TokenFromDb(ctx context.Context, authConfig *AuthConfig) (*oauth2.Token, error) {
+	token, err := a.db.GetToken(ctx, authConfig.Email)
 	if err != nil {
 		return nil, err
 	}
@@ -126,11 +120,11 @@ func (a *Auth) TokenFromDb(authConfig *AuthConfig) (*oauth2.Token, error) {
 	}, nil
 }
 
-func (a *Auth) SaveToken(authConfig *AuthConfig, token *oauth2.Token) error {
+func (a *Auth) SaveToken(ctx context.Context, authConfig *AuthConfig, token *oauth2.Token) error {
 	email := authConfig.Email
-	found, _ := a.db.GetToken(email)
+	found, _ := a.db.GetToken(ctx, email)
 	if found == nil {
-		return a.db.AddToken(database.Token{
+		return a.db.AddToken(ctx, database.Token{
 			Email:        email,
 			AccessToken:  token.AccessToken,
 			RefreshToken: token.RefreshToken,
@@ -138,13 +132,9 @@ func (a *Auth) SaveToken(authConfig *AuthConfig, token *oauth2.Token) error {
 			TokenType:    token.TokenType,
 		})
 	}
-	return a.db.UpdateToken(email, token)
+	return a.db.UpdateToken(ctx, email, token)
 }
 
-func (a *Auth) GetEmails() ([]string, error) {
-	emails, err := a.db.GetEmails()
-	if err != nil {
-		return nil, err
-	}
-	return emails, nil
+func (a *Auth) GetEmails(ctx context.Context) ([]string, error) {
+	return a.db.GetEmails(ctx)
 }
