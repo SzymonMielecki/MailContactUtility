@@ -84,14 +84,14 @@ func (s *Server) Start(authConfig *google_auth.AuthConfig) {
 	}
 	log.Println("Starting server...")
 	go s.ServeWeb()
-	s.AuthClient.StartAuth(authConfig)
-	client, err := s.AuthClient.GetHTTPClient(authConfig)
+	s.AuthClient.StartAuth(s.ctx, authConfig)
+	client, err := s.AuthClient.GetHTTPClient(s.ctx, authConfig)
 	if err != nil {
 		log.Printf("Unable to create http client: %v", err)
 		s.cancel()
 		return
 	}
-	mailClient, err := mail_reciever.NewMailReciever(option.WithHTTPClient(client), *authConfig, s.ctx, s.projectId)
+	mailClient, err := mail_reciever.NewMailReciever(s.ctx, option.WithHTTPClient(client), *authConfig, s.projectId)
 	if err != nil {
 		log.Printf("Unable to create mail client: %v", err)
 		s.cancel()
@@ -116,7 +116,7 @@ func (s *Server) ServeWeb() {
 	close(s.errChan)
 }
 func (s *Server) ListenForEmails() {
-	if err := s.MailClient.ListenForEmails(s.mailList); err != nil {
+	if err := s.MailClient.ListenForEmails(s.ctx, s.mailList); err != nil {
 		s.errChan <- err
 	}
 }
@@ -133,7 +133,7 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 		}
 	}
 	log.Println("Processing email from: ", sender)
-	emails, err := s.AuthClient.GetEmails()
+	emails, err := s.AuthClient.GetEmails(s.ctx)
 	if err != nil {
 		log.Printf("Error getting emails: %v", err)
 		return
@@ -143,19 +143,19 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 		return
 	}
 	authConfig := google_auth.AuthConfig{Email: sender, Scopes: []string{people.ContactsScope}, Path: s.credentailsPath}
-	client, err := s.AuthClient.GetHTTPClient(&authConfig)
+	client, err := s.AuthClient.GetHTTPClient(s.ctx, &authConfig)
 	if err != nil {
 		log.Printf("Unable to create http client: %v", err)
 		return
 	}
 	user_auth := option.WithHTTPClient(client)
-	client_ca, err := contact_adder.NewContactAdder(user_auth)
+	client_ca, err := contact_adder.NewContactAdder(s.ctx, user_auth)
 	if err != nil {
 		log.Printf("Unable to create contact client: %v", err)
 		return
 	}
 
-	mailContent, err := s.MailClient.GetMessage(mail.Id)
+	mailContent, err := s.MailClient.GetMessage(s.ctx, mail.Id)
 	if err != nil {
 		log.Printf("Error getting message: %v", err)
 		return
@@ -171,17 +171,17 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 			fullMailText += string(mailString)
 		}
 	}
-	contact, err := s.ContactClient.Generate(fullMailText)
+	contact, err := s.ContactClient.Generate(s.ctx, fullMailText)
 	if err != nil {
 		log.Printf("Error generating contact: %v", err)
 		return
 	}
-	_, err = client_ca.AddContact(contact)
+	_, err = client_ca.AddContact(s.ctx, contact)
 	if err != nil {
 		log.Printf("Error adding contact: %v", err)
 		return
 	}
-	err = s.MailClient.Reply(mailContent.Id, contact, mailContent, sender)
+	err = s.MailClient.Reply(s.ctx, mailContent.Id, contact, mailContent, sender)
 	if err != nil {
 		log.Printf("Error replying to message: %v", err)
 	}

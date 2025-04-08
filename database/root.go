@@ -21,8 +21,8 @@ type Database struct {
 	db *gorm.DB
 }
 
-func (d *Database) UpdateToken(email string, token *oauth2.Token) error {
-	return d.db.Model(&Token{}).Where("email = ?", email).Updates(Token{
+func (d *Database) UpdateToken(ctx context.Context, email string, token *oauth2.Token) error {
+	return d.db.WithContext(ctx).Model(&Token{}).Where("email = ?", email).Updates(Token{
 		AccessToken:  token.AccessToken,
 		TokenType:    token.TokenType,
 		RefreshToken: token.RefreshToken,
@@ -51,21 +51,21 @@ func NewDatabase(ctx context.Context, config DatabaseConfig) (*Database, error) 
 	return &Database{db: db}, nil
 }
 
-func (d *Database) AddToken(token Token) error {
-	return d.db.Model(&Token{}).Create(&token).Error
+func (d *Database) AddToken(ctx context.Context, token Token) error {
+	return d.db.WithContext(ctx).Model(&Token{}).Create(&token).Error
 }
 
-func (d *Database) GetEmails() ([]string, error) {
+func (d *Database) GetEmails(ctx context.Context) ([]string, error) {
 	var emails []string
-	if err := d.db.Model(&Token{}).Pluck("email", &emails).Error; err != nil {
+	if err := d.db.WithContext(ctx).Model(&Token{}).Pluck("email", &emails).Error; err != nil {
 		return nil, err
 	}
 	return emails, nil
 }
 
-func (d *Database) GetToken(email string) (*Token, error) {
+func (d *Database) GetToken(ctx context.Context, email string) (*Token, error) {
 	var token Token
-	if err := d.db.Model(&Token{}).Where("email = ?", email).First(&token).Error; err != nil {
+	if err := d.db.WithContext(ctx).Model(&Token{}).Where("email = ?", email).First(&token).Error; err != nil {
 		return nil, err
 	}
 	return &token, nil

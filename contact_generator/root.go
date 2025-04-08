@@ -2,16 +2,15 @@ package contact_generator
 
 import (
 	"MailContactUtilty/helper"
+	"context"
 	"encoding/json"
 	"fmt"
 
 	"github.com/google/generative-ai-go/genai"
-	"golang.org/x/net/context"
 	"google.golang.org/api/option"
 )
 
 type ContactGenerator struct {
-	ctx    context.Context
 	client *genai.Client
 	model  *genai.GenerativeModel
 }
@@ -34,14 +33,13 @@ func NewContactGenerator(ctx context.Context, apiKey string) (*ContactGenerator,
 		},
 	}
 	return &ContactGenerator{
-		ctx:    ctx,
 		model:  model,
 		client: client,
 	}, nil
 }
 
-func (c *ContactGenerator) Generate(mail string) (*helper.Contact, error) {
-	resp, err := c.model.GenerateContent(c.ctx, genai.Text("Extract the sender data, utilizing the data from the top of the mail, aswell as the footer, from this mail: \n"+mail+"\nBe very sure of the data you extract, if data is missing, do not make it up, but return an empty string instead, if the email or phone is different between the top and the footer, return the email or phone from the footer, be sure to include the data if the mail contains it"))
+func (c *ContactGenerator) Generate(ctx context.Context, mail string) (*helper.Contact, error) {
+	resp, err := c.model.GenerateContent(ctx, genai.Text("Extract the sender data, utilizing the data from the top of the mail, aswell as the footer, from this mail: \n"+mail+"\nBe very sure of the data you extract, if data is missing, do not make it up, but return an empty string instead, if the email or phone is different between the top and the footer, return the email or phone from the footer, be sure to include the data if the mail contains it"))
 	if err != nil {
 		return nil, err
 	}
@@ -63,5 +61,4 @@ func (c *ContactGenerator) Generate(mail string) (*helper.Contact, error) {
 func (c *ContactGenerator) Close() error {
 	c.client.Close()
 	return nil
-
 }
