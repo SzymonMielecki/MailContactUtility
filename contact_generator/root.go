@@ -3,6 +3,7 @@ package contact_generator
 import (
 	"MailContactUtilty/helper"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 
@@ -13,6 +14,10 @@ import (
 type ContactGenerator struct {
 	client *genai.Client
 	model  *genai.GenerativeModel
+}
+type ImageData struct {
+	Type string
+	Data []byte
 }
 
 func NewContactGenerator(ctx context.Context, apiKey string) (*ContactGenerator, error) {
@@ -38,8 +43,31 @@ func NewContactGenerator(ctx context.Context, apiKey string) (*ContactGenerator,
 	}, nil
 }
 
-func (c *ContactGenerator) Generate(ctx context.Context, mail string) (*helper.Contact, error) {
-	resp, err := c.model.GenerateContent(ctx, genai.Text("Extract the sender data, utilizing the data from the top of the mail, aswell as the footer, from this mail: \n"+mail+"\nBe very sure of the data you extract, if data is missing, do not make it up, but return an empty string instead, if the email or phone is different between the top and the footer, return the email or phone from the footer, be sure to include the data if the mail contains it"))
+func (c *ContactGenerator) Generate(ctx context.Context, mail string, images []ImageData) (*helper.Contact, error) {
+	imagesData := make([]genai.Part, len(images)+2)
+	for i, image := range images {
+		decoded := make([]byte, base64.URLEncoding.DecodedLen(len(image.Data)))
+		n, err := base64.URLEncoding.Decode(decoded, image.Data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode image data: %w", err)
+		}
+		if n == 0 {
+			return nil, fmt.Errorf("decoded image data is empty")
+		}
+		imagesData[i] = genai.ImageData(
+			image.Type,
+			decoded[:n],
+		)
+	}
+
+	imagesData[len(images)] = genai.Text("Extract the sender data, utilizing the data from the top of the mail, aswell as the footer, from this mail: \n" +
+		mail + "\n" +
+		"Be very sure of the data you extract, if data is missing, do not make it up, but return an empty string instead, if the email or phone is different between the top and the footer, return the email or phone from the footer, be sure to include the data if the mail contains it",
+	)
+	imagesData[len(images)+1] = genai.Text("If images are present, use them to extract the data, if the images are not clear, return an empty string instead of making up data")
+	resp, err := c.model.GenerateContent(ctx,
+		imagesData...,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +77,7 @@ func (c *ContactGenerator) Generate(ctx context.Context, mail string) (*helper.C
 		}
 		for _, part := range cand.Content.Parts {
 			var contact helper.Contact
-			err := json.Unmarshal([]byte(fmt.Sprint(part)), &contact)
+			err := json.Unmarshal(fmt.Append(nil, part), &contact)
 			if err == nil {
 				return &contact, nil
 			}
