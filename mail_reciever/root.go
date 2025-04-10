@@ -28,9 +28,15 @@ type PubSubMessage struct {
 }
 
 func (mr *MailReciever) Reply(ctx context.Context, id string, contact *helper.Contact, originalMsg *gmail.Message, sender string) error {
+	var subject string
+	for _, header := range originalMsg.Payload.Headers {
+		if header.Name == "Subject" {
+			subject = header.Value
+		}
+	}
 	rawMessage := "From: " + mr.Email + "\r\n" +
 		"To: " + sender + "\r\n" +
-		"Subject: Re: Contact Added\r\n" +
+		"Subject: Re: " + subject + "\r\n" +
 		"References: " + originalMsg.Id + "\r\n" +
 		"In-Reply-To: " + originalMsg.Id + "\r\n" +
 		"Content-Type: text/plain; charset=UTF-8\r\n\r\n" +
@@ -193,10 +199,18 @@ func getHeader(headers []*gmail.MessagePartHeader, name string) string {
 }
 
 func (mr *MailReciever) GetMessage(ctx context.Context, id string) (*gmail.Message, error) {
-	userId := "me"
-	msg, err := mr.Service.Users.Messages.Get(userId, id).Context(ctx).Do()
+	msg, err := mr.Service.Users.Messages.Get("me", id).Context(ctx).Do()
 	if err != nil {
 		log.Printf("Unable to retrieve message: %v", err)
+		return nil, err
+	}
+	return msg, nil
+}
+
+func (mr *MailReciever) GetAttachment(ctx context.Context, messageId, attachmentId string) (*gmail.MessagePartBody, error) {
+	msg, err := mr.Service.Users.Messages.Attachments.Get("me", messageId, attachmentId).Context(ctx).Do()
+	if err != nil {
+		log.Printf("Unable to retrieve attachment: %v", err)
 		return nil, err
 	}
 	return msg, nil
