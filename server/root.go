@@ -161,6 +161,7 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 		return
 	}
 	fullMailText := ""
+	images := []contact_generator.ImageData{}
 	for _, part := range mailContent.Payload.Parts {
 		if part.MimeType == "text/plain" {
 			mailString, err := base64.URLEncoding.DecodeString(part.Body.Data)
@@ -170,8 +171,19 @@ func (s *Server) HandleEmail(mail *gmail.Message) {
 			}
 			fullMailText += string(mailString)
 		}
+		if part.MimeType == "image/jpeg" || part.MimeType == "image/png" || part.MimeType == "image/svg" {
+			body, err := s.MailClient.GetAttachment(s.ctx, mail.Id, part.Body.AttachmentId)
+			if err != nil {
+				log.Printf("Error getting attachment: %v", err)
+				continue
+			}
+			images = append(images, contact_generator.ImageData{
+				Type: part.MimeType,
+				Data: []byte(body.Data),
+			})
+		}
 	}
-	contact, err := s.ContactClient.Generate(s.ctx, fullMailText)
+	contact, err := s.ContactClient.Generate(s.ctx, fullMailText, images)
 	if err != nil {
 		log.Printf("Error generating contact: %v", err)
 		return
