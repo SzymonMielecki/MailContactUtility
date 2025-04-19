@@ -14,7 +14,8 @@ import (
 )
 
 type Auth struct {
-	db *database.Database
+	recieverEmail string
+	db            *database.Database
 }
 
 type AuthConfig struct {
@@ -34,7 +35,8 @@ func NewAuth(ctx context.Context, config database.DatabaseConfig) (*Auth, error)
 		return nil, err
 	}
 	return &Auth{
-		db: db,
+		db:            db,
+		recieverEmail: "",
 	}, nil
 }
 
@@ -75,6 +77,7 @@ func (a *Auth) HandleAuthCode(ctx context.Context, authConfig *AuthConfig, code 
 }
 
 func (a *Auth) StartAuth(ctx context.Context, authConfig *AuthConfig) {
+	a.recieverEmail = authConfig.Email
 	if _, err := a.TokenFromDb(ctx, authConfig); err != nil {
 		url, err := a.GetUrl(ctx, *authConfig)
 		if err != nil {
@@ -136,5 +139,20 @@ func (a *Auth) SaveToken(ctx context.Context, authConfig *AuthConfig, token *oau
 }
 
 func (a *Auth) GetEmails(ctx context.Context) ([]string, error) {
-	return a.db.GetEmails(ctx)
+	if a.recieverEmail == "" {
+		return nil, fmt.Errorf("reciever email is not set")
+	}
+	emails, err := a.db.GetEmails(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	filtered := make([]string, 0, len(emails))
+	for _, email := range emails {
+		if email != a.recieverEmail {
+			filtered = append(filtered, email)
+		}
+	}
+
+	return filtered, nil
 }

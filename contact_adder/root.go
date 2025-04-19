@@ -23,11 +23,20 @@ func NewContactAdder(ctx context.Context, clientOption option.ClientOption) (*Co
 }
 
 func (ca *ContactAdder) AddContact(ctx context.Context, contact *helper.Contact) (*helper.Contact, error) {
-	_, err := ca.People.CreateContact(&people.Person{
+	surname := contact.Surname
+	exists, err := ca.CheckExists(ctx, contact)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		surname = surname + " DUPLICATE"
+	}
+
+	_, err = ca.People.CreateContact(&people.Person{
 		Names: []*people.Name{
 			{
 				GivenName:  contact.Name,
-				FamilyName: contact.Surname,
+				FamilyName: surname,
 			},
 		},
 		EmailAddresses: []*people.EmailAddress{
@@ -50,4 +59,12 @@ func (ca *ContactAdder) AddContact(ctx context.Context, contact *helper.Contact)
 		return nil, err
 	}
 	return contact, nil
+}
+
+func (ca *ContactAdder) CheckExists(ctx context.Context, contact *helper.Contact) (bool, error) {
+	resp, err := ca.People.SearchContacts().Query(contact.Name + " " + contact.Surname).ReadMask("names").Context(ctx).Do()
+	if err != nil {
+		return false, err
+	}
+	return len(resp.Results) > 0, nil
 }

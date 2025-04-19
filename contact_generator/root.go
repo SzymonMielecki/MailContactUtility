@@ -87,6 +87,5 @@ func (c *ContactGenerator) Generate(ctx context.Context, mail string, images []I
 }
 
 func (c *ContactGenerator) Close() error {
-	c.client.Close()
-	return nil
+	return c.client.Close()
 }

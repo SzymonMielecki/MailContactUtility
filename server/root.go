@@ -42,6 +42,7 @@ type ServerConfig struct {
 	DatabaseHost     string
 	GeminiApiKey     string
 	ProjectId        string
+	RecieverEmail    string
 }
 
 func NewServer(config ServerConfig) (*Server, error) {

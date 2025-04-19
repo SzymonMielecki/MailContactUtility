@@ -44,7 +44,7 @@ func (mr *MailReciever) Reply(ctx context.Context, id string, contact *helper.Co
 		"Name: " + contact.Name + "\n" +
 		"Surname: " + contact.Surname + "\n" +
 		"Email: " + contact.Email + "\n" +
-		"Phone:" + contact.Phone + "\n" +
+		"Phone: " + contact.Phone + "\n" +
 		"Organization: " + contact.Organization + "\n"
 
 	message := &gmail.Message{
@@ -92,33 +92,109 @@ func (mr *MailReciever) GetUnreadMessages(ctx context.Context) ([]*gmail.Message
 	return messages.Messages, nil
 }
 
+const (
+	maxRetries = 3
+	retryDelay = 5 * time.Second
+)
+
 func (mr *MailReciever) ListenForEmails(ctx context.Context, target chan<- *gmail.Message) error {
 	messageAlert := make(chan PubSubMessage)
 
+	_, err := mr.ensureTopic(ctx)
+	if err != nil {
+		return fmt.Errorf("topic setup failed: %w", err)
+	}
+
+	if err := mr.setupWatch(ctx); err != nil {
+		return fmt.Errorf("watch setup failed: %w", err)
+	}
+
+	sub, err := mr.ensureSubscription(ctx)
+	if err != nil {
+		return fmt.Errorf("subscription setup failed: %w", err)
+	}
+
+	log.Printf("Starting to receive messages...")
+	go func() {
+		for {
+			err := sub.Receive(ctx, func(msgCtx context.Context, m *pubsub.Message) {
+				var pubSubMessage PubSubMessage
+				if err := json.Unmarshal(m.Data, &pubSubMessage); err != nil {
+					log.Printf("Unable to unmarshal message: %v", err)
+					m.Ack()
+					return
+				}
+				select {
+				case messageAlert <- pubSubMessage:
+				case <-ctx.Done():
+					return
+				}
+				m.Ack()
+			})
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				log.Printf("Receive error: %v, retrying in %v", err, retryDelay)
+				time.Sleep(retryDelay)
+				continue
+			}
+		}
+	}()
+
+	for {
+		log.Println("Checking for new emails...")
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-messageAlert:
+			if err := mr.handleNewMessages(ctx, target); err != nil {
+				log.Printf("Error handling messages: %v", err)
+			}
+		}
+	}
+}
+
+func (mr *MailReciever) ensureTopic(ctx context.Context) (bool, error) {
 	exists, err := mr.PubSubClient.Topic("gmail-watcher").Exists(ctx)
 	if err != nil {
-		return fmt.Errorf("unable to check if topic exists: %v", err)
+		return false, fmt.Errorf("failed to check topic existence: %w", err)
 	}
 
 	if !exists {
 		_, err = mr.PubSubClient.CreateTopic(ctx, "gmail-watcher")
 		if err != nil {
-			return fmt.Errorf("unable to create topic: %v", err)
+			return false, fmt.Errorf("failed to create topic: %w", err)
 		}
+		log.Printf("Created new topic: gmail-watcher")
 	}
+	return exists, nil
+}
 
-	_, err = mr.Service.Users.Watch("me", &gmail.WatchRequest{
-		LabelIds:  []string{"INBOX"},
-		TopicName: fmt.Sprintf("projects/%s/topics/gmail-watcher", mr.projectId),
-	}).Context(ctx).Do()
-	if err != nil {
-		return fmt.Errorf("unable to watch for emails: %v", err)
+func (mr *MailReciever) setupWatch(ctx context.Context) error {
+	for i := 0; i < maxRetries; i++ {
+		_, err := mr.Service.Users.Watch("me", &gmail.WatchRequest{
+			LabelIds:  []string{"INBOX"},
+			TopicName: fmt.Sprintf("projects/%s/topics/gmail-watcher", mr.projectId),
+		}).Context(ctx).Do()
+		if err == nil {
+			return nil
+		}
+		if i < maxRetries-1 {
+			log.Printf("Watch setup failed (attempt %d/%d): %v", i+1, maxRetries, err)
+			time.Sleep(retryDelay)
+			continue
+		}
+		return fmt.Errorf("failed to set up watch after %d attempts: %w", maxRetries, err)
 	}
+	return nil
+}
 
+func (mr *MailReciever) ensureSubscription(ctx context.Context) (*pubsub.Subscription, error) {
 	sub := mr.PubSubClient.Subscription("gmail-watcher-sub")
-	exists, err = sub.Exists(ctx)
+	exists, err := sub.Exists(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to check subscription existence: %v", err)
+		return nil, fmt.Errorf("failed to check subscription existence: %w", err)
 	}
 
 	if !exists {
@@ -129,53 +205,43 @@ func (mr *MailReciever) ListenForEmails(ctx context.Context, target chan<- *gmai
 			ExpirationPolicy: 24 * time.Hour,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create subscription: %v", err)
+			return nil, fmt.Errorf("failed to create subscription: %w", err)
 		}
 		log.Printf("Successfully created subscription")
 	} else {
 		log.Printf("Using existing subscription: %s", "gmail-watcher-sub")
 	}
+	return sub, nil
+}
 
-	log.Printf("Starting to receive messages...")
-	go func() {
-		err = sub.Receive(ctx, func(msgCtx context.Context, m *pubsub.Message) {
-			var pubSubMessage PubSubMessage
-			if err := json.Unmarshal(m.Data, &pubSubMessage); err != nil {
-				log.Printf("Unable to unmarshal message: %v", err)
-				m.Ack()
-				return
-			}
-			messageAlert <- pubSubMessage
-			m.Ack()
-		})
-	}()
+func (mr *MailReciever) handleNewMessages(ctx context.Context, target chan<- *gmail.Message) error {
+	newMessages, err := mr.GetUnreadMessages(ctx)
+	if err != nil {
+		return fmt.Errorf("error fetching messages: %w", err)
+	}
 
-	for {
-		log.Println("Checking for new emails...")
+	for _, msg := range newMessages {
+		fullMsg, err := mr.GetMessage(ctx, msg.Id)
+		if err != nil {
+			log.Printf("Error fetching message details: %v", err)
+			continue
+		}
+
+		log.Printf("New email received - Subject: %s, From: %s",
+			getHeader(fullMsg.Payload.Headers, "Subject"),
+			getHeader(fullMsg.Payload.Headers, "From"))
+
 		select {
+		case target <- fullMsg:
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-messageAlert:
-			log.Println("Checking for new emails...")
-			newMessages, err := mr.GetUnreadMessages(ctx)
-			if err != nil {
-				log.Printf("Error fetching messages: %v", err)
-				continue
-			}
+		}
 
-			for _, msg := range newMessages {
-				fullMsg, err := mr.GetMessage(ctx, msg.Id)
-				if err != nil {
-					log.Printf("Error fetching message details: %v", err)
-					continue
-				}
-
-				log.Printf("New email received - Subject: %s, From: %s", getHeader(fullMsg.Payload.Headers, "Subject"), getHeader(fullMsg.Payload.Headers, "From"))
-				target <- fullMsg
-				mr.MarkAsRead(ctx, msg.Id)
-			}
+		if err := mr.MarkAsRead(ctx, msg.Id); err != nil {
+			log.Printf("Failed to mark message %s as read: %v", msg.Id, err)
 		}
 	}
+	return nil
 }
 
 func (mr *MailReciever) MarkAsRead(ctx context.Context, id string) error {
